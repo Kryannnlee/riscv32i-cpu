@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>RV32I 速查卡</title>
+<style>
+  @page { size: A4; margin: 8mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Consolas","DejaVu Sans Mono","Microsoft YaHei",monospace;
+         font-size: 9.5px; line-height: 1.35; color:#000; margin:0; }
+  h1 { font-size: 15px; margin: 0 0 4px; text-align:center; }
+  h2 { font-size: 11px; margin: 6px 0 2px; border-bottom:1px solid #000; padding-bottom:1px; }
+  .cols { column-count: 2; column-gap: 12px; }
+  table { border-collapse: collapse; width: 100%; margin: 2px 0; }
+  td, th { border: 1px solid #999; padding: 1px 3px; vertical-align: top; }
+  th { background:#eee; }
+  code, pre { font-family: inherit; }
+  pre { margin:1px 0; white-space: pre; }
+  .small { font-size: 8.6px; }
+  ul { margin: 1px 0 1px 14px; padding:0; }
+  .note { font-size:8.6px; }
+  b { font-weight:700; }
+  .grp { font-weight:700; }
+</style>
+</head>
+<body>
+<h1>RISC-V RV32I 速查卡（本项目子集）</h1>
+
+<div class="cols">
+
+<h2>寄存器（x0~x31）</h2>
+<table class="small">
+<tr><th>编号</th><th>别名</th><th>用途</th><th>编号</th><th>别名</th></tr>
+<tr><td>x0</td><td>zero</td><td>恒 0</td><td>x16</td><td>a6</td></tr>
+<tr><td>x1</td><td>ra</td><td>返回地址</td><td>x17</td><td>a7</td></tr>
+<tr><td>x2</td><td>sp</td><td>栈指针</td><td>x18</td><td>s2</td></tr>
+<tr><td>x3</td><td>gp</td><td>全局指针</td><td>x19</td><td>s3</td></tr>
+<tr><td>x4</td><td>tp</td><td>线程指针</td><td>x20</td><td>s4</td></tr>
+<tr><td>x5~7</td><td>t0~t2</td><td>临时</td><td>x21~27</td><td>s5~s11</td></tr>
+<tr><td>x8</td><td>s0/fp</td><td>帧指针</td><td>x28~31</td><td>t3~t6</td></tr>
+<tr><td>x9</td><td>s1</td><td>被调用者保存</td><td>x10~11</td><td>a0~a1(参数/返回)</td></tr>
+<tr><td>x12~15</td><td>a2~a5</td><td>参数</td><td colspan="2">x0 读恒 0、写忽略</td></tr>
+</table>
+
+<h2>六种格式（bit 31 → 0）</h2>
+<pre class="small">R  funct7   rs2   rs1   f3  rd  op   0x33
+I  imm[11:0]       rs1   f3  rd  op   0x13/0x03/0x67
+S  imm[11:5] rs2   rs1   f3  imm[4:0] op   0x23
+B  imm[12|10:5] rs2 rs1  f3  imm[4:1|11] op  0x63
+U  imm[31:12]              rd  op   0x37/0x17
+J  imm[20|10:1|11|19:12]   rd  op   0x6F</pre>
+<div class="small note">
+字段位置固定：opcode[6:0] · rd[11:7] · funct3[14:12] · rs1[19:15] · rs2[24:20] · funct7[31:25]</div>
+
+<h2>opcode（最低 7 位）</h2>
+<table class="small">
+<tr><th>opcode</th><th>类</th><th>opcode</th><th>类</th></tr>
+<tr><td>0110011</td><td>R 运算</td><td>0110111</td><td>LUI</td></tr>
+<tr><td>0010011</td><td>I 立即数</td><td>0010111</td><td>AUIPC</td></tr>
+<tr><td>0000011</td><td>LW</td><td>1101111</td><td>JAL</td></tr>
+<tr><td>1100111</td><td>JALR</td><td>1100011</td><td>分支</td></tr>
+<tr><td>0100011</td><td>SW</td><td colspan="2"></td></tr>
+</table>
+
+<h2>funct3 / funct7</h2>
+<table class="small">
+<tr><th>R(0x33)</th><th>f3</th><th>f7</th><th>I-imm(0x13)</th><th>f3</th></tr>
+<tr><td>ADD</td><td>000</td><td>0000000</td><td>ADDI</td><td>000</td></tr>
+<tr><td>SUB</td><td>000</td><td>0100000</td><td>SLTI</td><td>010</td></tr>
+<tr><td>SLT</td><td>010</td><td>0</td><td>XORI</td><td>100</td></tr>
+<tr><td>XOR</td><td>100</td><td>0</td><td>ORI</td><td>110</td></tr>
+<tr><td>OR</td><td>110</td><td>0</td><td>ANDI</td><td>111</td></tr>
+<tr><td>AND</td><td>111</td><td>0</td><td>LW</td><td>010</td></tr>
+</table>
+<div class="small note">
+分支(0x63)：BEQ=000 BNE=001 · SW(0x23) f3=010 · JALR(0x67) f3=000</div>
+
+<h2>立即数重组 + 符号扩展</h2>
+<pre class="small">I: {{20{instr[31]}}, instr[31:20]}
+S: {{20{instr[31]}}, instr[31:25], instr[11:7]}
+B: {{19{instr[31]}}, instr[31], instr[7], instr[30:25], instr[11:8], 1'b0}
+U: {instr[31:12], 12'b0}
+J: {{11{instr[31]}}, instr[31], instr[19:12], instr[20], instr[30:21], 1'b0}</pre>
+
+<h2>指令大白话（18 条）</h2>
+<table class="small">
+<tr><th>指令</th><th>做什么</th></tr>
+<tr><td>add x5,x6,x7</td><td>x5 = x6 + x7</td></tr>
+<tr><td>sub</td><td>x5 = x6 - x7</td></tr>
+<tr><td>and/or/xor</td><td>x5 = x6 ⊙ x7（按位）</td></tr>
+<tr><td>slt x5,x6,x7</td><td>x5 = (x6&lt;x7)?1:0 有符号</td></tr>
+<tr><td>addi x5,x6,10</td><td>x5 = x6 + 10</td></tr>
+<tr><td>andi/ori/xori</td><td>同上，按位</td></tr>
+<tr><td>slti x5,x6,10</td><td>x5 = (x6&lt;10)?1:0</td></tr>
+<tr><td>lw x5,8(x6)</td><td>x5 = 内存[x6+8]</td></tr>
+<tr><td>sw x5,8(x6)</td><td>内存[x6+8] = x5</td></tr>
+<tr><td>beq x5,x6,L</td><td>x5==x6 → PC=PC+L</td></tr>
+<tr><td>bne x5,x6,L</td><td>x5!=x6 → PC=PC+L</td></tr>
+<tr><td>jal ra,L</td><td>ra=PC+4; PC=PC+L</td></tr>
+<tr><td>jalr x5,8(x6)</td><td>x5=PC+4; PC=x6+8</td></tr>
+<tr><td>lui x5,0x12345</td><td>x5 = 0x12345&lt;&lt;12</td></tr>
+<tr><td>auipc x5,0x12345</td><td>x5 = PC+(0x12345&lt;&lt;12)</td></tr>
+</table>
+
+<h2>指令类别 → 数据通路</h2>
+<ul class="small">
+<li><b>算术/逻辑/立即数</b>：RegFile 读 → ALU → 写 RegFile</li>
+<li><b>lw/sw</b>：RegFile 读 → ALU 算地址 → DMEM 读/写</li>
+<li><b>分支</b>：ALU 相减 → zero → 改 PC</li>
+<li><b>跳转</b>：算目标 → PC；写返回地址 → RegFile</li>
+<li><b>lui/auipc</b>：立即数/PC → 写 RegFile</li>
+</ul>
+
+<h2>Verilog / 概念 速记</h2>
+<ul class="small">
+<li>组合：<code>assign</code> / <code>always_comb</code>（用 <code>=</code>）</li>
+<li>时序：<code>always_ff @(posedge clk)</code>（用 <code>&lt;=</code>，读旧值一起更新）</li>
+<li><code>case</code> 要写 <code>default</code>，否则出 latch</li>
+<li>位宽不匹配：窄→宽补 0，宽→窄截断（不报错）</li>
+<li>RISC-V 是 <b>小端</b>：0x00A30293 存内存 = <code>93 A3 02 00</code></li>
+<li>x0：读恒 0，写忽略</li>
+<li>常用：<code>32'h...</code> <code>4'b0000</code>；拼接 <code>{a,b}</code>；复制 <code>{n{x}}</code></li>
+</ul>
+
+</div>
+</body>
+</html>

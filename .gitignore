@@ -1,0 +1,12 @@
+# 论文（不公开）
+rv32i-cpu/thesis/
+
+# 参考资料与归档（体积大 / 版权）
+_archive/
+_reference/
+*.pdf
+rv32i-cpu.json
+
+# 仿真产物
+*.vvp
+*.vcd

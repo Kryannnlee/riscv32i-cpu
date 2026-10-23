@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>RV32I CPU 架构总图</title>
+<style>
+  @page { size: A4; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Microsoft YaHei","DejaVu Sans",sans-serif;
+         font-size: 11px; line-height: 1.45; color:#111; margin:0; }
+  h1 { font-size: 20px; text-align:center; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 14px 0 4px; color:#fff; background:#2b5f9e; padding:3px 8px; border-radius:3px; }
+  .sub { text-align:center; color:#666; font-size:10px; margin-bottom:8px; }
+  pre { font-family:"Consolas","DejaVu Sans Mono",monospace; font-size:10.5px;
+        line-height:1.15; background:#f6f8fa; border:1px solid #ccc; padding:8px; overflow-x:auto; }
+  table { border-collapse: collapse; width:100%; margin:4px 0; font-size:10.5px; }
+  td, th { border:1px solid #bbb; padding:2px 5px; text-align:left; }
+  th { background:#e8eef7; }
+  .layer { border:1px solid #999; border-radius:4px; padding:6px 10px; margin:4px 0; }
+  .l4 { background:#e8f4ea; }
+  .l3 { background:#eef4fb; }
+  .l2 { background:#fdf6e8; }
+  .l1 { background:#f6eef6; }
+  .tag { display:inline-block; background:#2b5f9e; color:#fff; border-radius:3px;
+         padding:1px 6px; font-size:10px; margin-right:6px; }
+  .ok { color:#1a7f37; font-weight:700; }
+  .todo { color:#999; }
+  .now { color:#b26a00; font-weight:700; }
+  ul { margin:2px 0 2px 16px; padding:0; }
+  .cols2 { column-count:2; column-gap:14px; }
+  code { background:#f0f0f0; padding:0 2px; }
+  .note { font-size:10px; color:#555; }
+</style>
+</head>
+<body>
+<h1>RV32I CPU 架构总图</h1>
+<div class="sub">从逻辑门 → 模块 → 单周期 → 五级流水线　（附进度地图）</div>
+
+<h2>0 · 分层理解（我们在哪一层）</h2>
+<div class="layer l4"><span class="tag">第4层</span><b>五级流水线 CPU + 冒险处理</b>　← 最终目标
+<pre>IF ──reg── ID ──reg── EX ──reg── MEM ──reg── WB</pre></div>
+<div class="layer l3"><span class="tag">第3层</span><b>单周期数据通路</b>（把模块连起来）　← 先打通</div>
+<div class="layer l2"><span class="tag">第2层</span><b>功能模块</b>　← 正在写这层
+<div class="note">pc · imem · decoder · imm_gen · alu_ctrl · regfile · alu · dmem · adder · mux2</div></div>
+<div class="layer l1"><span class="tag">第1层</span><b>基本元件</b>
+<div class="note">门(AND/OR/XOR/NOT) · 多路器 MUX · 加法器 · 触发器(寄存器) · 存储器</div></div>
+<div class="note">写 RTL = 在第 2 层搭模块；综合工具把第 2 层变成第 1 层的 门 / 触发器 / LUT。</div>
+
+<h2>1 · 最终目标：五级流水线 CPU</h2>
+<pre>
+        ┌────────────────────────── CPU TOP ──────────────────────────┐
+        └─────────────────────────────────────────────────────────────┘
+
+  IF 取指           ID 译码            EX 执行           MEM 访存         WB 写回
+┌──────────┐    ┌────────────┐    ┌────────────┐    ┌──────────┐    ┌──────────┐
+│    PC    │    │  Decoder   │    │    ALU     │    │   DMEM   │    │  WB Mux  │
+│   IMEM   │    │ RegFile(读)│    │  转发 MUX   │    │  (LW/SW) │    │          │
+│          │    │  ImmGen    │    │  分支比较   │    │          │    │          │
+└────┬─────┘    └─────┬──────┘    └─────┬──────┘    └────┬─────┘    └────┬─────┘
+     │                │                 │                │               │
+ ┌───▼───┐        ┌───▼───┐         ┌───▼────┐       ┌───▼───┐       ┌───▼───┐
+ │ IF/ID │───────►│ ID/EX │────────►│ EX/MEM │──────►│ MEM/WB│──────►│ 写回   │
+ └───────┘        └───────┘         └────────┘       └───────┘       └───────┘
+  流水线寄存器       流水线寄存器        流水线寄存器       流水线寄存器
+
+  NextPC MUX： PC+4  /  分支目标  /  跳转目标
+  Hazard(冒险)： 转发 Forward  +  暂停 Stall  +  冲刷 Flush
+</pre>
+<div class="note">每个 <code>─reg─</code>（IF/ID 等）是流水线寄存器，把中间结果存一拍传给下一级。5 级同时工作 → 吞吐率提高（单条指令耗时不变）。</div>
+
+<h2>2 · 单周期数据通路（先做这个）</h2>
+<pre>
+        ┌──────┐  pc   ┌──────┐
+        │  PC  │──────►│ IMEM │──► instr
+        └──▲───┘       └──────┘        │
+           │                           ▼
+        pc_next                 ┌────────────┐
+           │                    │  Decoder   │──► 控制信号
+           │                    └─────┬──────┘
+           │              ┌───────────┼────────────┐
+           │              ▼           ▼            │
+           │        ┌─────────┐ ┌──────────┐       │
+           │        │ RegFile │ │ ImmGen   │       │
+           │        └─┬─────┬─┘ └────┬─────┘       │
+           │       rs1   rs2        imm           │
+           │        │     └──┐       │            │
+           │        │    [ALUSrc MUX]◄┘            │
+           │        └──────┬──┘                    │
+           │               ▼                       │
+           │           ┌───────┐                   │
+           │           │  ALU  │──► alu_result      │
+           │           └───┬───┘                   │
+           │               │                       │
+           │          ┌────▼────┐                  │
+           │          │  DMEM   │──► mem_rdata      │
+           │          └─────────┘                  │
+           │               │                       │
+           │        [ResultSrc MUX] ──► wr_data ───┘（写回 RegFile）
+           │
+       [PCNext MUX] = PC+4 / 分支目标 / 跳转目标
+</pre>
+
+<h2>2b · 五个阶段的含义（IF / ID / EX / MEM / WB）</h2>
+<table>
+<tr><th>阶段</th><th>干什么</th><th>涉及模块</th><th>产出</th></tr>
+<tr><td><b>IF</b> 取指</td><td>用 PC 从指令内存取 32 位指令；同时算 PC+4</td><td>pc, imem, adder</td><td>instr, pc</td></tr>
+<tr><td><b>ID</b> 译码</td><td>指令→控制信号；读寄存器 rs1/rs2；生成立即数</td><td>decoder, regfile(读), imm_gen</td><td>控制信号, rs1_data, rs2_data, imm</td></tr>
+<tr><td><b>EX</b> 执行</td><td>ALU 运算；算访存地址；分支相减判断</td><td>alu, alu_ctrl, ALUSrc MUX</td><td>alu_result, zero</td></tr>
+<tr><td><b>MEM</b> 访存</td><td>仅 LW/SW 动内存（其它空过）</td><td>dmem</td><td>mem_rdata</td></tr>
+<tr><td><b>WB</b> 写回</td><td>把结果写回寄存器 rd（ALU/内存/PC+4 三选一）</td><td>regfile(写), WB MUX</td><td>寄存器更新</td></tr>
+</table>
+<table>
+<tr><th>指令</th><th>IF</th><th>ID</th><th>EX</th><th>MEM</th><th>WB</th></tr>
+<tr><td>addi x5,x6,10</td><td>取指</td><td>译码</td><td>x6+10</td><td>—</td><td>写 x5</td></tr>
+<tr><td>lw x5,8(x6)</td><td>取指</td><td>译码</td><td>算地址</td><td>读内存</td><td>写 x5</td></tr>
+<tr><td>beq x5,x6,L</td><td>取指</td><td>译码</td><td>x5−x6</td><td>—</td><td>—</td></tr>
+</table>
+<div class="note">记忆：取指(去拿) → 译码(看懂) → 执行(算) → 访存(存取内存) → 写回(存回寄存器)</div>
+
+<h2>3 · 进度地图</h2>
+<table>
+<tr><th>层</th><th>模块</th><th>状态</th></tr>
+<tr><td rowspan="10">第2层<br>功能模块</td><td>alu.sv</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>regfile.sv</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>imm_gen.sv</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>alu_ctrl.sv</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>decoder.sv</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>mux2.sv / adder.sv</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>program_counter.sv</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>imem.sv</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>dmem.sv</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>cpu_top.sv</td><td class="ok">✅ 单周期 CPU 跑通！</td></tr>
+<tr><td>五级流水线（结构）</td><td class="ok">✅ 无相关程序跑通</td></tr>
+<tr><td><b>冒险处理（转发/停顿/冲刷）</b></td><td class="now">▶ 阶段6</td></tr>
+<tr><td colspan="2" class="note">第1层基本元件：组合逻辑/触发器 ✅ 已用上</td></tr>
+<tr><td><b>第3层</b> cpu_top.sv</td><td class="todo">☐ 单周期整合</td></tr>
+<tr><td><b>第4层</b> 流水线寄存器 + hazard_unit</td><td class="todo">☐</td></tr>
+<tr><td><b>外设/上板</b> uart + Vivado</td><td class="todo">☐</td></tr>
+</table>
+
+<h2>4 · 指令类别 → 用哪些部件</h2>
+<table>
+<tr><th>指令类别</th><th>数据通路</th></tr>
+<tr><td>算术 / 逻辑 / 立即数</td><td>RegFile 读 → <b>ALU</b> → 写回 RegFile</td></tr>
+<tr><td>lw / sw</td><td>RegFile 读 → ALU 算地址 → <b>DMEM</b> 读/写</td></tr>
+<tr><td>分支 beq/bne</td><td>ALU 相减 → zero → 改 <b>PC</b></td></tr>
+<tr><td>跳转 jal/jalr</td><td>算目标 → <b>PC</b>；写返回地址 → RegFile</td></tr>
+<tr><td>lui / auipc</td><td>立即数 / PC → 写回 RegFile</td></tr>
+</table>
+
+<h2>5 · 模块清单</h2>
+<table>
+<tr><th>模块</th><th>作用</th><th>输入 → 输出</th></tr>
+<tr><td>pc</td><td>当前指令地址</td><td>clk,rst,pc_next → pc</td></tr>
+<tr><td>imem</td><td>指令内存</td><td>addr → instr</td></tr>
+<tr><td>decoder</td><td>指令 → 控制信号</td><td>instr → 见 §6</td></tr>
+<tr><td>imm_gen</td><td>立即数生成</td><td>instr → imm</td></tr>
+<tr><td>alu_ctrl</td><td>产生 ALU 具体操作</td><td>alu_op,funct3,funct7 → alu_sel</td></tr>
+<tr><td>regfile</td><td>32 个通用寄存器</td><td>rs1,rs2,rd,wr_data,we → rs1_data,rs2_data</td></tr>
+<tr><td>alu</td><td>算术 / 逻辑</td><td>a,b,alu_sel → result,zero</td></tr>
+<tr><td>dmem</td><td>数据内存</td><td>clk,we,addr,wr_data → rd_data</td></tr>
+<tr><td>adder</td><td>PC+4 / 目标地址</td><td>a,b → sum</td></tr>
+<tr><td>mux2</td><td>二选一（参数化）</td><td>sel,d0,d1 → y</td></tr>
+<tr><td>cpu_top</td><td>整合全部</td><td>clk,rst → (以后接 UART)</td></tr>
+</table>
+
+<h2>6 · 控制信号（decoder 输出）</h2>
+<table>
+<tr><th>信号</th><th>位宽</th><th>含义</th></tr>
+<tr><td>reg_write</td><td>1</td><td>写寄存器堆</td></tr>
+<tr><td>mem_read</td><td>1</td><td>读数据内存（LW）</td></tr>
+<tr><td>mem_write</td><td>1</td><td>写数据内存（SW）</td></tr>
+<tr><td>alu_src</td><td>1</td><td>0=rs2 1=imm</td></tr>
+<tr><td>alu_op</td><td>2</td><td>大类，给 alu_ctrl</td></tr>
+<tr><td>branch / jump</td><td>1 / 1</td><td>分支 / 跳转</td></tr>
+<tr><td>result_src</td><td>2</td><td>写回来源：0=ALU 1=mem 2=PC+4</td></tr>
+</table>
+
+</body>
+</html>
