@@ -54,9 +54,11 @@ rv32i-cpu/
 阶段2 Decode     ✅ imm_gen · alu_ctrl · decoder 完成
 阶段3 PC+IMEM    ✅ mux2·adder·PC·imem·dmem 完成
 阶段4 单周期CPU  ✅ cpu_top 整合完成，跑通测试程序！
-阶段5 五级流水线 ✅ 结构跑通（无相关程序）
-阶段6 冒险处理   ▶ 6a 已看见冒险（x2=0），6b 转发 下一个
-阶段7 跑C/上板/论文 ⬜ 未开始
+阶段5 五级流水线 ✅ 结构跑通（含数据转发）
+阶段6 冒险处理   ✅ 6a 复现 · 6b 转发 · 6c load-use 停顿 · 6d 分支冲刷
+指令集补齐       ✅ LUI · AUIPC · JAL · JALR（RV32I 常用子集完整）
+上板验证         ✅ 首次上板成功（x1=76 正确），引脚 U18/T19/T10
+阶段7 跑C/上板/论文 ▶ 下一步：字节访存 → UART → C 工具链
 ```
 
 ---
@@ -79,10 +81,17 @@ rv32i-cpu/
 | `08-thesis-notes.md` | 论文素材库 | ✅ |
 | `09-pitfalls.md` | 避坑清单（bug 可能性） | ✅ |
 | `10-instructions-plain.md` | 指令大白话（一条一句） | ✅ |
+| `11-hazards.md` | **冒险处理专题**（6a~6d 完整推演 + 论文素材） | ✅ |
+| `12-rebuild-log.md` | **重建日志**（第0~5层已全部通过，含等价性验证） | ✅ |
+| `13-vendor-reference.md` | **官方例程对比**（BX71 68 个例程，可借用的模块清单） | ✅ |
+| `cases/` | **踩坑档案**（每个坑一份事故报告：现象/当时的代码/定位/修正） | ✅ 12 条 |
 | `worksheet-format.md` | 练习纸：指令格式 | ✅ |
 | `worksheet-decoder.md` | 练习纸：decoder 真值表 | ✅ |
 | `cheatsheet.html` | 打印版速查卡（A4 两栏，浏览器打印） | ✅ |
 | `architecture.html` | 架构总图（分层 + 流水线图 + 进度地图，可打印） | ✅ |
 | `progress.md` | 里程碑日志（追加式） | ✅ |
 
-> 规则：新知识只写进 `03-notes.md`；架构只更新 `01-architecture.md`；进度只追加 `progress.md`。不新建散文件。
+> 规则：零散知识写进 `03-notes.md`；**成体系的大主题**另开主题文档并登记在上表（如 `11-hazards.md`），
+> 同时在 `03-notes.md` 留一行指针，不重复正文；**真正踩过的坑**在 `cases/` 建一份事故档案
+> （现象 / 当时的代码 / 怎么定位 / 修正），`09-pitfalls.md` 只留一句话结论并指过去；
+> 架构只更新 `01-architecture.md`；进度只追加 `progress.md`。

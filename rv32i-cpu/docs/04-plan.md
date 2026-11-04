@@ -62,3 +62,20 @@ Tier 3 加分   Dhrystone 等基准 + 性能/资源数据 + 中断/显示
 - P3：RAW 相关 / load-use / 分支三类测试全对
 - P4：一个 C 程序仿真跑通
 - P5：板上跑通 + UART 打印
+
+## 6. 当前状态（2026-10-25）
+
+P3 冒险处理进行中：
+
+- [x] 数据转发（RAW；EX/MEM 与 MEM/WB 两条通路，EX/MEM 优先）
+- [x] load-use 暂停（`hazard_unit` + PC/IF_ID 停住 + ID_EX 灌气泡）
+- [x] 控制冒险冲刷（EX 级判断分支，IF_ID 与 ID_EX 各冲刷一拍，罚 2 拍）
+
+对应「P3 验收」要求的三类测试：RAW ✅ / load-use ✅ / 分支 ✅
+
+P3 已全部完成。
+
+指令集补齐 ✅：LUI / AUIPC / JAL / JALR 已实现，RV32I 常用子集完整。
+下一步：P4 跑 C 程序（RISC-V 工具链 + MMIO），或先做 P5 上板（UART）。
+
+详细改动见 `progress.md` [014]。

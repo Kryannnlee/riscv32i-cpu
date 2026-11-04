@@ -99,3 +99,177 @@
 ---
 
 <!-- 新里程碑从下面追加 -->
+
+## [014] 阶段6b：数据转发完成 ✅✅（大里程碑）
+- 新增 `rtl/forward_unit.sv`：纯组合，只输出 `forward_a` / `forward_b`（00=原值 01=EX/MEM 10=MEM/WB）
+- `id_ex` 补上 `rs1` / `rs2` 编号（原先只存了数据，转发无从比较）
+- `cpu_pipe` 在 EX 段加两个转发 MUX；B 口 MUX 放在 ALUSrc **之前**
+- 转发条件三条与：`reg_write && (rd != 0) && (rd == rs)`；优先级 EX/MEM > MEM/WB（用 `if/else if` 表达）
+- `sw` 的存数据也接转发后的 rs2——三处入口一起覆盖
+- 测试程序换成 8 条，覆盖：相邻相关、隔一条相关、EX/MEM+MEM/WB 同时命中、sw 存数据转发、lw 读回
+- **顺带修掉两个陈旧 testbench**：`imem_tb`（断言旧程序）和 `cpu_tb`（单周期，断言旧程序）——现在三者用同一份程序
+- 全部 12 个 testbench 跑通：alu 9 / regfile 4 / imm_gen 9 / alu_ctrl 13 / decoder 6 / mux2 4 / adder 4 / pc 4 / imem 8 / dmem 2 / cpu 7 / cpu_pipe 7
+- 学到：单周期与流水线跑同一程序比同一份结果，是一个免费的等价性检查
+- 笔记：`03-notes.md` 第 9 轮；`09-pitfalls.md` 11~16
+- 进度：**下一步 6c load-use 暂停**
+
+## [015] RTL 全量补注释
+- 17 个 RTL 文件统一加：文件头（作用 / 在 CPU 里的位置 / 输入输出 / 已知局限）+ 关键行内注释
+- 重点讲清了三件事：
+  1. `regfile` 读组合、写时序 → 这是所有数据冒险的根源
+  2. 流水线寄存器"行李随行"：越往下越窄，`id_ex` 最多 8 个控制信号，`mem_wb` 只剩 2 个
+  3. 转发 MUX 必须在 ALUSrc **之前**；`ex_mem` 的 rs2 要接转发后的值
+- 顺手在注释里标出各文件的**已知局限**（decoder 缺 4 条 opcode、`next_pc` 恒 PC+4、WB MUX 只判 `result_src[0]`）
+- 纯注释改动，功能零变化；12 个 testbench 全绿
+
+## [016] 新建冒险处理专题文档（留痕）
+- 新建 `docs/11-hazards.md`：阶段6 完整推演（冒险分类 / 时空图 / 6a 复现 / 6b 转发 / 6c 停顿 / 6d 冲刷 / 验证方法 / 论文对应章节）
+- **改了文档规则**：`00-index.md` 原先写「不新建散文件，新知识只写 `03-notes.md`」。
+  现在改为：零散知识仍进 `03-notes.md`；**成体系的大主题**可另开主题文档并登记在文档清单表里
+- 原因：冒险处理横跨 6a~6d 四个阶段，散在问答里追不动；且它同时是论文第2章和第6章的素材
+- `03-notes.md` 第 9 轮改成一行指针，正文不重复（避免两份内容不同步）
+
+## [017] 阶段6c：load-use 停顿完成 ✅
+- 新增 `rtl/hazard_unit.sv`：检测 lw 后紧跟使用其结果的指令，输出 `stall`
+- `decoder` 新增 `uses_rs1` / `uses_rs2`：只有**真正读**的源才参与比较，
+  修掉 `addi` 的立即数低位被误当成 rs2 的**误停**
+- `program_counter` 加 `stall`（停住不更新）、`if_id` 加 `stall`（保持）、`id_ex` 加 `flush`（灌气泡）
+- 测试程序扩到 10 条，新增：真 load-use（x7=36）、假相关反例（`addi x9,x0,10` 紧跟 `lw x10`）
+- testbench 统计 `stall` 次数，断言**恰好 1 次**
+- 反向验证：临时去掉 `uses_*` 条件重跑，`stall` 变成 2 次、测试失败 → 证明这个断言抓得住误停
+- **踩坑**：`cpu_top` 里 `program_counter` 的 `stall` 没接 → 悬空 Z → `!Z`=X → PC 卡死。
+  单周期全错（只有 x1 对）。已在 `cpu_top` 显式接 `1'b0`
+- 全套 12 个 testbench 全绿（pc 6 / decoder 6 / cpu 10 / cpu_pipe 11 …）
+- 笔记：`11-hazards.md` 第 5 节；`09-pitfalls.md` 17~18
+- 进度：**下一步 6d 控制冒险冲刷 + next_pc MUX**
+
+## [018] 阶段6d：控制冒险 / 分支冲刷完成 ✅（阶段6 全部完成）
+- `cpu_pipe` 新增分支判断：`branch_target = id_ex_pc + id_ex_imm`（★ 必须用分支自己的 PC）
+  `branch_taken` 按 funct3 区分 beq/bne；`pc_redirect = branch_taken`
+- `next_pc` 从恒等于 `pc+4` 改成 MUX：`pc_redirect ? branch_target : pc_plus4`
+- `if_id` 新增 `flush` 输入（优先级高于 `stall`）；`id_ex` 复用已有 `flush`，接 `stall | pc_redirect`
+- 冲刷两级 → 每次跳转罚 **2 拍**（改在 ID 判断可降到 1 拍，但要多比较器和转发）
+- 测试程序扩到 18 条：前面保留转发和 load-use，后面加三条分支，
+  两条带「毒药指令」做对照（`addi x11, x0, 111/222`），一条不该跳
+- testbench 新增 `redirect_count`，断言 **恰好 2 次**；x11=3、x12=2
+- 反向验证：断掉 flush 重跑 → `x11 = 222`、`redirect_count = 3`、测试失败 → 证明断言有效
+- 全套 12 个 testbench 全绿（imem 19 / cpu 12 / cpu_pipe 14 …）
+- 笔记：`11-hazards.md` 第 6 节；`09-pitfalls.md` 19~20
+- 进度：**阶段6 完成**。下一步：补齐 JAL/JALR/LUI/AUIPC → 然后进 P4 跑 C 程序
+
+## [019] 新建踩坑档案 `docs/cases/`（留痕）
+- 新建 `docs/cases/`：一个坑一份事故报告，固定结构
+  **现象 / 当时的代码 / 为什么错 / 怎么定位 / 修正后代码 / 怎么防止 / 一句话记忆**
+- 首批 12 条，覆盖阶段2~6d 真正踩过和差点踩的坑
+- 每条标注：**代码来源**（原始/重建）、**严重程度**、**实际是否造成故障**
+- 和 `09-pitfalls.md` 分工：那里是一句话结论 + 未踩到的防范条目；这里是完整现场
+- `00-index.md` 文档规则同步更新：真正踩过的坑要建事故档案，`09-pitfalls.md` 留一句话指过去
+- 用途：论文复盘章节素材、面试讲项目素材、以后复发时快速对照
+
+## [020] 指令集补齐：LUI / AUIPC / JAL / JALR ✅
+- `decoder` 新增 4 条 opcode，并新增输出 `alu_a_src`（00=rs1 01=pc 10=常数 0）
+- `id_ex` 传递 `alu_a_src`；`mem_wb` 新增 `pc4` 通路（JAL/JALR 的返回地址）
+- `cpu_pipe`：
+  - ALU A 口加来源 MUX（转发之后、ALU 之前）
+  - 跳转目标统一由 ALU 算出（JAL：A=pc；JALR：A=rs1），bit0 清零
+  - `pc_redirect = branch_taken | jump`，目标二选一
+  - WB MUX 改成按 `result_src` 两位完整译码（0=ALU 1=mem 2=PC+4）
+- `cpu_top`（单周期）同步支持这四条，继续充当"标准答案"用于等价性对照
+- 测试程序扩到 28 条：新增 JAL 前跳（带毒药）、AUIPC 算 PC、ADDI 构地址、JALR 间接跳转、LUI
+- 断言语义升级：`redirect_count` 恰好 4（2 分支 + 1 JAL + 1 JALR）
+- **踩坑**：`id_ex` 的新输出 `alu_a_src_out` 忘了接 → Z → 走 default → JAL 用 rs1(x0) 当基址 → 跳到 12
+  详见 `cases/case-13-missing-output-port.md`
+- 全套 12 个 testbench 全绿（decoder 10 / imem 29 / cpu 16 / cpu_pipe 18）
+- 进度：RV32I 常用子集完整。**下一步 P4：跑 C 程序（工具链 + MMIO）或先上板**
+
+## [021] 暂停推进功能，从零重建理解
+- 原因：2026-10-30 用户说"最近的工作是你做的，我没有做"。6b 之后的代码由 AI 直接完成，
+  用户只旁观，无法在答辩/面试中讲清楚
+- 做法：从第0层（一条指令是什么）开始重新走，每层必须能用自己的话讲出来才往下
+- 新建 `docs/12-rebuild-log.md`：记录每层的问题、回答、判断、卡点
+- 阶梯：第0层 指令是什么 → 第1层 部件 → 第2层 单周期 → 第3层 流水线 → 第4层 冒险 → 第5层 修复
+- 功能开发暂停，直到第3层讲通
+
+## [022] 重建完成第0~5层，转发单元由用户重写并验证
+- 走完 `12-rebuild-log.md` 的第 0~5 层，每层都要求用户自己讲清楚才往下
+- 第 5 层：用户不看原代码重写 `rtl/forward_unit_mine.sv`
+  - 首次提交两处文件错误：`timescale 1ps/1ns`（单位比精度小，编译报错）、放在 `rtl/rtl/` 导致通配符匹配不到
+  - 修正后逻辑与原版一致
+- 新增 `tb/forward_unit_cmp_tb.sv`：同一组输入喂给两份实现逐组比对
+  - 寄存器号取 {0,1,2,3,4,5,31}，4 个输入 × 2 个写使能，穷举 9604 组
+  - 结果：**不一致 0 组，等价**
+- 全套 12 个 testbench 仍全绿
+- 下一步：用同样方式重做 6c（load-use 停顿）和 6d（分支冲刷）
+
+## [023] 6c hazard_unit 由用户重写并通过验收
+- 用户写出 `rtl/hazard_unit_mine.sv`，替换 `cpu_pipe` 中的实例化
+- 完整流水线测试全过：15 项寄存器检查 + stall 恰好 1 次 + 改道 4 次
+- 反向验证：去掉 `uses_rs1/rs2` 守卫后 stall 变成 2 次 → 证明守卫确实防止了误停
+- 至此 **forward_unit 与 hazard_unit 两份核心代码都已由用户自己写并验证**
+- 全套 12 个 testbench 全绿
+- 下一步：6d 分支冲刷，同样让用户自己写
+
+## [024] 重建日志补全至 11-03
+- `12-rebuild-log.md` 记录了第0~5层、第二轮 6c、以及 flush / 多 PC 的讨论
+- 用户已自己写出并验证 `forward_unit_mine` 与 `hazard_unit_mine`
+- 6d 定为"预测 + 验证"方式验收，尚未开始
+
+## [025] 6d 预测验证完成，重建第一轮收尾
+- 让用户先预测"把 `branch_target` 里的 `id_ex_pc` 改成 `pc` 会怎样"，再实跑对照
+- 用户预测对 1 条（偏移 +8），错 2 条（x11 终值、改道次数）
+- **成果**：用户预测帮我发现 `case-10` 里"多跳 12 字节"写错了，实际是 **8 字节**，
+  已全局修正 5 处文档
+- **发现测试盲区**：寄存器终值全对，只有改道计数抓到错误 → 记入 `09-pitfalls` 第 21 条
+- 至此 6b/6c/6d 用户都已自己讲清并验证，重建第一轮结束
+
+## [026] 首次 Vivado 综合：抓到三个综合期问题
+- 器件：XC7Z020（封装待用户确认，当前用 clg400-2）
+- 新增 `fpga_top.sv`（上板顶层）、`fpga/prepare_sources.py`、`fpga/synth.tcl`
+- 结果：1381 LUT / 1514 FF / 128 LUTRAM / 0 BRAM；WNS +10.43ns @20ns → 约 104MHz
+- 三个问题（均入 `cases/` 14~16）：
+  1. Vivado 不接受 `default_nettype none` + `logic` 端口 → 综合失败
+  2. 只连一个调试口 → 31 个寄存器被当死代码删掉，资源数字失真
+  3. 组合读被推断成 BRAM → 上板会差一拍（最危险，不报错）
+- 修法：预处理去指令 / 全寄存器异或引出 / `ram_style=distributed`
+
+## [027] 首次上板：心跳不闪，定位到 imem 未初始化
+- 板子：BX71 核心板，引脚确认 U18/T19/T10（厂商 xdc 一致）
+- 现象：D4(DONE) 常亮、D9(心跳) 常亮不闪
+- 根因：`imem` 只初始化了 0~27，其余为 X；综合器当 don't care，
+  把 ROM 从 256x32 压成 **32x29**（见综合日志 `ROM: Preliminary Mapping Report`）；
+  程序跑完后 PC 吃到未定义内容 -> X 传播 -> PC 变成 X -> LED 恒定
+- 修法：`initial` 开头先 `for (i=0;i<256;i++) mem[i] = NOP;` 再覆盖测试程序
+- 记入 `cases/case-17-imem-uninitialized-x.md`
+- 新增 `fpga/build_all.tcl`（批量重跑 synth+impl+bitstream）
+
+## [028] ★ 首次上板成功：CPU 在真实硬件上算出正确结果
+- 板子：BX71 核心板（XC7Z020CLG400-2I）
+- 判据：`led[0] = (dbg_x1 == 76) ? 慢闪 : 常亮`
+  - 程序最后 `jal x1, +12` 在 PC=72 执行，返回地址应为 76
+  - **D9 慢闪 → x1 == 76 → CPU 在板上算对了**
+- 上板挡路的四个问题（全部入 cases/）：
+  - case-14 Vivado 不接受 default_nettype none + logic
+  - case-15 无观测逻辑被当死代码删
+  - case-16 组合读被推断成 BRAM
+  - case-17 imem 未初始化位置是 X
+  - case-18 Vivado 复制了约束文件，改原文件不生效
+- 定版引脚：clk=U18 / rst=T19 / led[0]=T10（高电平点亮）
+- 资料齐全：`ziliao/BX71/`（原理图、引脚表、官方例程 ch01~ch28）
+- **下一阶段：字节访存 → UART → C 程序**
+
+## [029] 解压并对比 BX71 官方 68 个例程
+- 解压 `BX71_020`（7020 版）全部 68 个例程到同目录 `_extracted_020/`
+- 对比结论写入 `docs/13-vendor-reference.md`
+- 关键发现：
+  - 引脚与我们完全一致（U18/T10/T19）
+  - 官方是 Verilog-2001 + 异步复位，我们是 SystemVerilog + 同步复位（我们更规范）
+  - 官方 xdc **没有 create_clock**，我们有（论文要报 Fmax 必须有）
+  - 可直接借用：UART 收发（ch05/06/09）、按键消抖（ch10）、存储器 IP（ch13/14）
+  - UART 分频值现成：115200 对应 433（50MHz）
+
+## [030] 从官方例程汇总引脚映射
+- 解析 76 个官方 xdc，汇总 410 个信号→引脚
+- UART：**TX=K19，RX=J19**（GPIO0 扩展口，需外接 USB-TTL）
+- 板载固定：clk=U18 / key=T19 / LED=T10（与我们一致）
+- 可选外部 LED：B20 / D19 / D20（ch09 用过）
+- 完整映射写入 `docs/13-vendor-reference.md` 第 6~7 节

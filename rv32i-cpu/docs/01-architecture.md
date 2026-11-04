@@ -112,8 +112,12 @@
 
 第4层 五级流水线
   [x] if_id / id_ex / ex_mem / mem_wb 流水线寄存器 ✅
-  [x] cpu_pipe.sv 五级整合 ✅ 无相关程序跑通
-  [ ] hazard_unit（转发/停顿/冲刷）← 下一个
+  [x] cpu_pipe.sv 五级整合 ✅ 含数据转发，相关程序跑通
+  [x] forward_unit（数据转发）✅
+  [x] hazard_unit（load-use 停顿）✅
+  [x] 分支冲刷 + next_pc MUX ✅
+  [x] LUI / AUIPC / JAL / JALR ✅（RV32I 常用子集完整）
+  [ ] 上板：UART + Vivado 工程 ← 下一个
 
 外设 / 上板
   [ ] uart（打印）
@@ -136,6 +140,8 @@
 | `dmem` | 数据内存 | clk, we, addr, wr_data | rd_data |
 | `adder` | 加法（PC+4 / 目标地址） | a, b | sum |
 | `mux2` | 二选一（参数化位宽） | sel, d0, d1 | y |
+| `forward_unit` | 判断该不该转发（只出选择信号，不搬数据） | id_ex_rs1/rs2, ex_mem_rd/reg_write, mem_wb_rd/reg_write | forward_a[1:0], forward_b[1:0] |
+| `hazard_unit` | 检测 load-use 冒险 | id_ex_mem_read/rd, if_id_rs1/rs2, uses_rs1/uses_rs2 | stall |
 | `cpu_top` | 把上面全部连起来 | clk, rst | （以后接 UART 等） |
 
 ## 4. 控制信号（decoder 输出）
@@ -246,9 +252,9 @@ WB : WB mux, regfile(写)
 | 寄存器 | 位置 | 存的内容 |
 | --- | --- | --- |
 | `if_id` | IF→ID | `pc`、`instr`、`pc_plus4` |
-| `id_ex` | ID→EX | `rs1_data`、`rs2_data`、`imm`、`rd`、`pc`、`pc_plus4`、`funct3`、`funct7` + **全部 8 个控制信号** |
+| `id_ex` | ID→EX | `rs1_data`、`rs2_data`、**`rs1`/`rs2` 编号**（转发比较用）、`imm`、`rd`、`pc`、`pc_plus4`、`funct3`、`funct7` + **全部 8 个控制信号** |
 | `ex_mem` | EX→MEM | `alu_result`、`rs2_data`(给 SW)、`zero`、`rd`、`pc_plus4` + 控制(`reg_write`、`mem_read`、`mem_write`、`branch`、`jump`、`result_src`) |
-| `mem_wb` | MEM→WB | `alu_result`、`mem_rdata`、`rd` + 控制(`reg_write`、`result_src`) |
+| `mem_wb` | MEM→WB | `alu_result`、`mem_rdata`、**`pc4`**（JAL/JALR 返回地址）、`rd` + 控制(`reg_write`、`result_src`) |
 
 **控制信号"随行"(每级用掉自用的、其余转发)**
 ```
@@ -259,4 +265,5 @@ ID 产生 8 个
    (branch / jump 用于 PC 决策)
 ```
 
-**第一版(阶段5)先不处理冒险** → 有数据相关时结果会错，阶段6 再加转发/暂停/冲刷。
+**阶段5 先不处理冒险** → 有数据相关时结果会错。
+**阶段6 分三步补**：转发 ✅ → load-use 暂停 ✅ → 分支冲刷 ✅（全部完成）。

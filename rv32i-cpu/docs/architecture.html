@@ -130,11 +130,15 @@
 <tr><td>imem.sv</td><td class="ok">✅ 测试通过</td></tr>
 <tr><td>dmem.sv</td><td class="ok">✅ 测试通过</td></tr>
 <tr><td>cpu_top.sv</td><td class="ok">✅ 单周期 CPU 跑通！</td></tr>
-<tr><td>五级流水线（结构）</td><td class="ok">✅ 无相关程序跑通</td></tr>
-<tr><td><b>冒险处理（转发/停顿/冲刷）</b></td><td class="now">▶ 阶段6</td></tr>
+<tr><td>五级流水线（结构）</td><td class="ok">✅ 含数据转发，相关程序跑通</td></tr>
+<tr><td>forward_unit.sv（数据转发）</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>hazard_unit.sv（load-use 停顿）</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>分支冲刷 + next_pc MUX</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>JAL / JALR / LUI / AUIPC（指令集补齐）</td><td class="ok">✅ 测试通过</td></tr>
+<tr><td>UART + Vivado 工程（上板）</td><td class="now">▶ 下一个</td></tr>
 <tr><td colspan="2" class="note">第1层基本元件：组合逻辑/触发器 ✅ 已用上</td></tr>
-<tr><td><b>第3层</b> cpu_top.sv</td><td class="todo">☐ 单周期整合</td></tr>
-<tr><td><b>第4层</b> 流水线寄存器 + hazard_unit</td><td class="todo">☐</td></tr>
+<tr><td><b>第3层</b> cpu_top.sv</td><td class="ok">✅ 单周期整合跑通</td></tr>
+<tr><td><b>第4层</b> 流水线寄存器</td><td class="ok">✅ if_id / id_ex / ex_mem / mem_wb</td></tr>
 <tr><td><b>外设/上板</b> uart + Vivado</td><td class="todo">☐</td></tr>
 </table>
 

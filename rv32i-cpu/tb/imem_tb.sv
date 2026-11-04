@@ -5,14 +5,59 @@ module imem_tb;
     logic [31:0] addr, instr;
     imem dut (.addr(addr), .instr(instr));
 
+    // 期望内容必须和 rtl/imem.sv 里的程序保持一致。
+    // 注意：这说明 imem_tb 和"仿真程序"耦合了——改程序就得改这里。
+    logic [31:0] expected [0:27];
+    int i;
+    int errors = 0;
+
     initial begin
         $dumpfile("sim/imem.vcd");
         $dumpvars(0, imem_tb);
 
-        addr = 32'd0;  #1; if (instr===32'h00A30293) $display("PASS addr=0"); else $display("FAIL addr=0 -> %h", instr);
-        addr = 32'd4;  #1; if (instr===32'h007302B3) $display("PASS addr=4"); else $display("FAIL addr=4 -> %h", instr);
-        addr = 32'd8;  #1; if (instr===32'h00B30333) $display("PASS addr=8"); else $display("FAIL addr=8 -> %h", instr);
-        addr = 32'd12; #1; if (instr===32'h00C303B3) $display("PASS addr=12"); else $display("FAIL addr=12 -> %h", instr);
+        expected[0] = 32'h00500093;  // addi x1, x0, 5
+        expected[1] = 32'h00108133;  // add  x2, x1, x1
+        expected[2] = 32'h00800193;  // addi x3, x0, 8
+        expected[3] = 32'h00310233;  // add  x4, x2, x3
+        expected[4] = 32'h0041A023;  // sw   x4, 0(x3)
+        expected[5] = 32'h06300313;  // addi x6, x0, 99
+        expected[6] = 32'h0001A283;  // lw   x5, 0(x3)
+        expected[7] = 32'h005283B3;  // add  x7, x5, x5     ★ 真 load-use
+        expected[8] = 32'h0001A503;  // lw   x10, 0(x3)
+        expected[9]  = 32'h00A00493;  // addi x9, x0, 10     ★ 假相关（instr[24:20]=10=x10）
+        expected[10] = 32'h00300593;  // addi x11, x0, 3
+        expected[11] = 32'h00108463;  // beq  x1, x1, +8     跳
+        expected[12] = 32'h06F00593;  // addi x11, x0, 111   毒药
+        expected[13] = 32'h00209463;  // bne  x1, x2, +8     跳
+        expected[14] = 32'h0DE00593;  // addi x11, x0, 222   毒药
+        expected[15] = 32'h00100613;  // addi x12, x0, 1
+        expected[16] = 32'h00109463;  // bne  x1, x1, +8     不跳
+        expected[17] = 32'h00200613;  // addi x12, x0, 2
+        expected[18] = 32'h00C000EF;  // jal  x1, +12
+        expected[19] = 32'h22B00593;  // addi x11, x0, 555   毒药
+        expected[20] = 32'h22C00593;  // addi x11, x0, 556   毒药
+        expected[21] = 32'h00100B93;  // addi x23, x0, 1
+        expected[22] = 32'h00000A97;  // auipc x21, 0
+        expected[23] = 32'h010A8A93;  // addi x21, x21, 16
+        expected[24] = 32'h000A8067;  // jalr x0, 0(x21)
+        expected[25] = 32'h30900593;  // addi x11, x0, 777   毒药
+        expected[26] = 32'h00100C13;  // addi x24, x0, 1
+        expected[27] = 32'h12345A37;  // lui  x20, 0x12345
+
+        // 用字节地址 0/4/8/... 去读，顺带验证 addr[31:2] 的字对齐索引
+        for (i = 0; i < 28; i++) begin
+            addr = i * 4;
+            #1;
+            if (instr === expected[i])
+                $display("PASS  addr=%0d", addr);
+            else begin
+                $display("FAIL  addr=%0d -> %h   期望 %h", addr, instr, expected[i]);
+                errors++;
+            end
+        end
+
+        if (errors == 0) $display("==== IMEM ALL PASS ====");
+        else             $display("==== IMEM FAIL: %0d 处错误 ====", errors);
 
         $finish;
     end

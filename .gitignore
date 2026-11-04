@@ -10,3 +10,15 @@ rv32i-cpu.json
 # 仿真产物
 *.vvp
 *.vcd
+
+# 厂家资料（体积大，本地保留）
+ziliao/
+
+# Vivado 工程产物（可由 fpga/*.tcl 重新生成）
+rv32i-cpu/fpga/prototype_rv32i/
+rv32i-cpu/fpga/build/
+rv32i-cpu/.Xil/
+*.log
+*.jou
+*.bit
+*.dcp
