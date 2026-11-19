@@ -34,3 +34,8 @@ set_property IOSTANDARD LVCMOS33 [get_ports {led[*]}]
 # ---- dbg_alive：GPIO0 扩展口 ----
 set_property PACKAGE_PIN L14     [get_ports dbg_alive]
 set_property IOSTANDARD LVCMOS33 [get_ports dbg_alive]
+
+# ---- UART TX：GPIO0 扩展口，接 USB-TTL 模块的 RX ----
+# 引脚来自 docs/13-vendor-reference.md（官方例程 ch05/ch06 的 uart 端口）
+set_property PACKAGE_PIN K19     [get_ports uart_tx]
+set_property IOSTANDARD LVCMOS33 [get_ports uart_tx]

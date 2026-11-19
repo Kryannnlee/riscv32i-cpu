@@ -137,7 +137,8 @@
 | `alu_ctrl` | 产生 ALU 的具体操作 | alu_op[1:0], funct3, funct7 | alu_sel[3:0] |
 | `regfile` | 32 个通用寄存器 | clk, we, rs1, rs2, rd, wr_data | rs1_data, rs2_data |
 | `alu` | 算术/逻辑 | a, b, alu_sel[3:0] | result, zero |
-| `dmem` | 数据内存 | clk, we, addr, wr_data | rd_data |
+| `dmem` | 数据内存 | clk, we, be[3:0], addr, wr_data | rd_data |
+| `load_extend` | 访存读数据提取与扩展 | word, addr_lo, funct3 | data |
 | `adder` | 加法（PC+4 / 目标地址） | a, b | sum |
 | `mux2` | 二选一（参数化位宽） | sel, d0, d1 | y |
 | `forward_unit` | 判断该不该转发（只出选择信号，不搬数据） | id_ex_rs1/rs2, ex_mem_rd/reg_write, mem_wb_rd/reg_write | forward_a[1:0], forward_b[1:0] |

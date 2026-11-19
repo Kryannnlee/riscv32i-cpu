@@ -50,7 +50,7 @@ module cpu_tb;
         @(negedge clk); @(negedge clk);
         rst = 0;
 
-        repeat (32) @(negedge clk);   // 28 条指令，单周期每拍一条，留余量
+        repeat (70) @(negedge clk);   // 41 条指令，单周期每拍一条，留余量
         #1;
 
         $display("---- 单周期 CPU 测试 ----");
@@ -69,6 +69,16 @@ module cpu_tb;
         check(21, 32'd104);
         check(24, 32'd1);
         check(20, 32'h12345000);
+        check(26, 32'h0000_0123); // sb + sb + lw
+        check(27, 32'hFFFF_FFFF); // lb
+        check(28, 32'h0000_00FF); // lbu
+        check(29, 32'hFFFF_FFFE); // lh
+        check(30, 32'h0000_FFFE); // lhu
+        check(15, 32'd111);
+        check(16, 32'd333);
+        check(17, 32'd444);
+        check(19, 32'd666);
+        check(18, 32'd888);
 
         if (errors == 0)
             $display("==== ALL PASS ====");

@@ -24,13 +24,19 @@
 //   流水线寄存器 = 本级产出 + 后面还要用但没用完的控制信号。
 //   所以越往下走越窄：id_ex 最宽（8 个控制信号全在），mem_wb 只剩 2 个。
 // ============================================================
-module cpu_pipe (
+module cpu_pipe #(
+    parameter bit USE_FILE       = 0,        // 1 = imem 从 sw/prog.hex 加载 C 程序
+    parameter int UART_CLK_FREQ  = 50_000_000,
+    parameter int UART_BAUD_RATE = 115200
+) (
     input logic clk,
     input logic rst,
     // 调试输出：上板点灯用；综合时也让整条数据通路有可观测的结果
     output logic [31:0] dbg_pc,
     output logic [31:0] dbg_x1,
-    output logic [31:0] dbg_xor_all
+    output logic [31:0] dbg_xor_all,
+    // UART 发送：向 MMIO 地址 0x3000 写入一个字节，就从这里串行发出
+    output logic        uart_tx
 );
 
     // -- IF 段 ----------------------------------------------
@@ -78,10 +84,23 @@ module cpu_pipe (
     logic [31:0] ex_mem_alu_result, ex_mem_rs2, ex_mem_pc4;
     logic        ex_mem_zero, ex_mem_reg_write, ex_mem_mem_read, ex_mem_mem_write, ex_mem_branch, ex_mem_jump;
     logic [4:0]  ex_mem_rd;
+    logic [2:0]  ex_mem_funct3;        // 访存大小/有无符号，MEM 级要用
     logic [1:0]  ex_mem_result_src;
 
     // -- MEM 段的产出 ---------------------------------------
-    logic [31:0] mem_rdata;
+    logic [31:0] mem_rdata;            // dmem 读出的整字
+    logic [31:0] mem_rdata_ext;        // 按 lb/lh/lbu/lhu 提取并扩展后的结果
+    logic [3:0]  store_be;             // 写内存时的字节使能
+    logic [31:0] store_data;           // 按访存大小对齐后的写数据
+
+    // -- MMIO（内存映射外设）---------------------------------
+    // 地址 0x3000：写 = UART 发送一个字节；读 = {31'b0, busy}
+    // dmem 只覆盖 0x1000~0x1FFF，所以 0x3xxx 这一页不会和真实内存冲突。
+    logic [31:0] mem_rdata_final;      // MMIO 覆盖之后真正送进 MEM/WB 的读数据
+    logic        is_mmio_uart;         // 地址落在 UART 那一页
+    logic        uart_we;              // 单拍的发送触发
+    logic [7:0]  uart_data;            // 要发的字节
+    logic        uart_busy;            // 1 = 上一帧还没发完
 
     // -- mem_wb 的输出（给 WB 用）---------------------------
     logic [31:0] mem_wb_alu_result, mem_wb_mem_rdata, mem_wb_pc4;
@@ -105,7 +124,7 @@ module cpu_pipe (
     assign next_pc  = pc_redirect ? redirect_target : pc_plus4;
 
     // 指令存储器：给定地址，当拍取出指令
-    imem imem_i (.addr(pc), .instr(instr));
+    imem #(.USE_FILE(USE_FILE)) imem_i (.addr(pc), .instr(instr));
 
     // IF/ID 寄存器：把这一拍取到的指令交给下一拍的 ID 级
     if_id if_id_i (
@@ -274,18 +293,25 @@ module cpu_pipe (
     );
 
     // 7) 分支判断（控制冒险的核心）
-    //    ALU 对分支做减法：zero=1 表示两数相等。再看 funct3 决定跳不跳。
-    //      beq (000)：相等就跳
-    //      bne (001)：不等就跳
-    //      其余 funct3 本子集未实现，一律不跳
+    //    ALU 按分支的具体类型算出比较结果：
+    //      beq/bne  ：ALU 做 SUB，看 zero（结果是否为 0）
+    //      blt/bge  ：ALU 做 SLT（有符号），看 alu_result[0]
+    //      bltu/bgeu：ALU 做 SLTU（无符号），看 alu_result[0]
+    //    SLT/SLTU 的结果只有 0 或 1，所以最低位就是"小于"这个答案。
+    //    不能用 zero 来判断 blt：zero 表示"结果等于 0"，含义正好反过来。
     //    目标地址 = 分支自己的 PC + B 型立即数
     //    （imm_gen 已经做过符号扩展，bit0 也补成了 0）
     assign branch_target = id_ex_pc + id_ex_imm;
 
     always_comb begin
         case (id_ex_funct3)
-            3'b000:  branch_taken = id_ex_branch &  zero;   // beq
-            3'b001:  branch_taken = id_ex_branch & ~zero;   // bne
+            3'b000:  branch_taken = id_ex_branch &  zero;          // beq
+            3'b001:  branch_taken = id_ex_branch & ~zero;          // bne
+            3'b100:  branch_taken = id_ex_branch &  alu_result[0]; // blt
+            3'b101:  branch_taken = id_ex_branch & ~alu_result[0]; // bge
+            3'b110:  branch_taken = id_ex_branch &  alu_result[0]; // bltu
+            3'b111:  branch_taken = id_ex_branch & ~alu_result[0]; // bgeu
+
             default: branch_taken = 1'b0;
         endcase
     end
@@ -311,6 +337,7 @@ module cpu_pipe (
     ex_mem ex_mem_i (
         .clk(clk), .rst(rst),
         .alu_result_in(alu_result), .rs2_data_in(ex_rs2), .pc4_in(id_ex_pc4),
+        .funct3_in(id_ex_funct3),
         .zero_in(zero), .rd_in(id_ex_rd),
         .reg_write_in(id_ex_reg_write), .mem_read_in(id_ex_mem_read),
         .mem_write_in(id_ex_mem_write),
@@ -318,6 +345,7 @@ module cpu_pipe (
         .result_src_in(id_ex_result_src),
         .alu_result_out(ex_mem_alu_result), .rs2_data_out(ex_mem_rs2),
         .pc4_out(ex_mem_pc4),
+        .funct3_out(ex_mem_funct3),
         .zero_out(ex_mem_zero), .rd_out(ex_mem_rd),
         .reg_write_out(ex_mem_reg_write),
         .mem_read_out(ex_mem_mem_read),
@@ -328,21 +356,89 @@ module cpu_pipe (
     );
 
     // ======================== MEM 段 ========================
-    // 涉及模块：dmem
-    // 只有 lw/sw 真正动内存，其它指令空过这一级。
+    // 涉及模块：dmem（写）、load_extend（读）
+    // 只有 lw/sw/lb/lh/sb/sh 真正动内存，其它指令空过这一级。
     // 地址用 ALU 算出的 alu_result；写数据用转发后的 rs2（存在 ex_mem_rs2 里）。
+
+    // 字节使能：决定 sw/sh/sb 各写几个字节、写在哪几个位置
+    //   sb：只有 addr[1:0] 选中的那一个字节
+    //   sh：addr[1] 选中的那一对字节（低半字或高半字）
+    //   sw：四个字节全写
+    //   其它 funct3（含非访存指令）：一个都不写
+    always_comb begin
+        case (ex_mem_funct3)
+            3'b000:  store_be = 4'b0001 << ex_mem_alu_result[1:0];          // sb
+            3'b001:  store_be = ex_mem_alu_result[1] ? 4'b1100 : 4'b0011;   // sh
+            3'b010:  store_be = 4'b1111;                                    // sw
+            default: store_be = 4'b0000;
+        endcase
+    end
+
+    // 写数据对齐：
+    //   RISC-V 规定 sw/sh/sb 取的都是 rs2 的**低位**，
+    //   放到哪个字节位置由地址决定。
+    //   所以先把数据"摊"到对应的字节通道上，dmem 里按通道直接拷贝即可。
+    //   漏掉这一步的典型症状：sb 写到第 2 个字节时取成了 rs2[15:8]。
+    always_comb begin
+        case (ex_mem_funct3)
+            3'b000:  store_data = {4{ex_mem_rs2[7:0]}};                     // sb：4 个通道都是低字节
+            3'b001:  store_data = ex_mem_alu_result[1]
+                                 ? {ex_mem_rs2[15:0], 16'd0}                // sh 写高半字
+                                 : {16'd0, ex_mem_rs2[15:0]};               // sh 写低半字
+            default: store_data = ex_mem_rs2;                               // sw：原样
+        endcase
+    end
+
+    // ---- MMIO 地址译码 ----
+    // 只看高 20 位，所以 0x3000 和 0x3004 都算 UART 这一页。
+    assign is_mmio_uart = (ex_mem_alu_result[31:12] == 20'h0_0003);
+    assign uart_we      = ex_mem_mem_write & is_mmio_uart;
+    assign uart_data    = ex_mem_rs2[7:0];
+
     dmem dmem_i (
         .clk(clk),
-        .we(ex_mem_mem_write),
+        // 写 MMIO 时不能同时写内存：0x3000 的 addr[11:2] 恰好是 0，
+        // 不挡住的话会把 dmem[0] 踩掉。
+        .we(ex_mem_mem_write & ~is_mmio_uart),
+        .be(store_be),
         .addr(ex_mem_alu_result),
-        .wr_data(ex_mem_rs2),
+        .wr_data(store_data),
         .rd_data(mem_rdata)
+    );
+
+    // MMIO 读优先于 dmem：读 0x3000 得到 busy，供软件轮询"上一帧发完没有"
+    always_comb begin
+        if (is_mmio_uart && ex_mem_mem_read)
+            mem_rdata_final = {31'd0, uart_busy};
+        else
+            mem_rdata_final = mem_rdata;
+    end
+
+    // 读数据提取：lb/lh 符号扩展，lbu/lhu 零扩展，lw 原样通过
+    load_extend_mine load_extend_i (
+        .word    (mem_rdata_final),
+        .addr_lo (ex_mem_alu_result[1:0]),
+        .funct3  (ex_mem_funct3),
+        .data    (mem_rdata_ext)
+    );
+
+    // UART 发送端：send 是单拍脉冲（模块内部有上升沿检测）
+    uart_tx #(
+        .CLK_FREQ (UART_CLK_FREQ),
+        .BAUD_RATE(UART_BAUD_RATE)
+    ) uart_tx_i (
+        .clk  (clk),
+        .rst  (rst),
+        .data (uart_data),
+        .send (uart_we),
+        .tx   (uart_tx),
+        .busy (uart_busy)
     );
 
     // MEM/WB 寄存器：只带 rd、两个候选写回值和 2 个控制信号
     mem_wb mem_wb_i (
         .clk(clk), .rst(rst),
-        .alu_result_in(ex_mem_alu_result), .mem_rdata_in(mem_rdata),
+        .alu_result_in(ex_mem_alu_result), .mem_rdata_in(mem_rdata_ext),
         .pc4_in(ex_mem_pc4),
         .rd_in(ex_mem_rd),
         .reg_write_in(ex_mem_reg_write),

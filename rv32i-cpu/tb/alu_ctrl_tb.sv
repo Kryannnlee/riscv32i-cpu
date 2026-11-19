@@ -20,7 +20,14 @@ initial begin
 
         // 1. 基础测试：load/store 与 branch
         check(2'b00, 3'b000, 7'h00, 4'd0);   // load/store → ADD (0)
-        check(2'b01, 3'b000, 7'h00, 4'd1);   // branch → SUB (1)
+
+        // 1b. 六种分支：beq/bne 用 SUB，blt/bge 用 SLT，bltu/bgeu 用 SLTU
+        check(2'b01, 3'b000, 7'h00, 4'd1);   // beq  → SUB  (1)
+        check(2'b01, 3'b001, 7'h00, 4'd1);   // bne  → SUB  (1)
+        check(2'b01, 3'b100, 7'h00, 4'd5);   // blt  → SLT  (5)
+        check(2'b01, 3'b101, 7'h00, 4'd5);   // bge  → SLT  (5)
+        check(2'b01, 3'b110, 7'h00, 4'd6);   // bltu → SLTU (6)
+        check(2'b01, 3'b111, 7'h00, 4'd6);   // bgeu → SLTU (6)
        
         // 2. R 型指令 (alu_op = 2'b10) 测试
         // 算术/逻辑运算：加减、异或、或、与、小于置位、移位等

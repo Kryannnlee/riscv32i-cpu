@@ -34,7 +34,9 @@ module cpu_top (
     logic [31:0] instr, imm;
     // 数据通路
     logic [31:0] rs1_data, rs2_data, alu_b;
-    logic [31:0] alu_result, mem_rdata, wb_data;
+    logic [31:0] alu_result, mem_rdata, mem_rdata_ext, wb_data;
+    logic [3:0]  store_be;
+    logic [31:0] store_data;
     logic [31:0] alu_a, jump_target;
     // 控制信号
     logic [3:0]  alu_sel;
@@ -86,7 +88,8 @@ module cpu_top (
 
     // 寄存器堆：注意这里是单周期写法--
     //   读地址和写地址都直接取**当前 instr**（同一拍完成读和写）
-    regfile register_file (
+    // 单周期关掉写优先旁路：否则 wr_data 会绕回 ALU 形成组合环
+    regfile #(.BYPASS(0)) register_file (
         .clk      (clk),
         .rst      (rst),
         .we       (reg_write),
@@ -129,18 +132,48 @@ module cpu_top (
     );
 
     // 数据存储器：地址来自 ALU（sw 时还要用 rs2 作写数据）
+    // 字节使能：sb 一个字节，sh 两个，sw 四个
+    always_comb begin
+        case (instr[14:12])
+            3'b000:  store_be = 4'b0001 << alu_result[1:0];          // sb
+            3'b001:  store_be = alu_result[1] ? 4'b1100 : 4'b0011;   // sh
+            3'b010:  store_be = 4'b1111;                             // sw
+            default: store_be = 4'b0000;
+        endcase
+    end
+
+    // 写数据对齐：sb/sh 取的都是 rs2 低位，摊到对应字节通道上
+    always_comb begin
+        case (instr[14:12])
+            3'b000:  store_data = {4{rs2_data[7:0]}};                       // sb
+            3'b001:  store_data = alu_result[1]
+                                 ? {rs2_data[15:0], 16'd0}                  // sh 高半字
+                                 : {16'd0, rs2_data[15:0]};                 // sh 低半字
+            default: store_data = rs2_data;                                 // sw
+        endcase
+    end
+
     dmem data_mem (
         .clk     (clk),
         .we      (mem_write),
+        .be      (store_be),
         .addr    (alu_result),
-        .wr_data (rs2_data),
+        .wr_data (store_data),
         .rd_data (mem_rdata)
+    );
+
+    // 读数据提取：lb/lh 符号扩展，lbu/lhu 零扩展，lw 原样
+    load_extend_mine load_extend_i (
+        .word    (mem_rdata),
+        .addr_lo (alu_result[1:0]),
+        .funct3  (instr[14:12]),
+        .data    (mem_rdata_ext)
     );
 
     // WB MUX：写回来源 0=ALU 1=内存 2=PC+4（jal/jalr 的返回地址）
     always_comb begin
         case (result_src)
-            2'b01:   wb_data = mem_rdata;
+            2'b01:   wb_data = mem_rdata_ext;
             2'b10:   wb_data = pc_plus4;
             default: wb_data = alu_result;
         endcase
@@ -153,10 +186,22 @@ module cpu_top (
     assign jump_target = {alu_result[31:1], 1'b0};
 
     // -- 4. 分支判断 ---------------------------------------
-    // beq（funct3=000）：ALU 减法结果为 0 才跳
-    // 其余（本子集里是 bne）：结果不为 0 才跳
-    assign branch_taken = branch & (instr[14:12] == 3'b000 ? zero : ~zero);
-
+    // 六种分支的条件判断
+    //   beq/bne：ALU 做 SUB，看 zero
+    //   blt/bge：ALU 做 SLT（有符号），看 alu_result[0]
+    //   bltu/bgeu：ALU 做 SLTU（无符号），看 alu_result[0]
+    // 单周期里 funct3 直接取 instr[14:12]，控制信号是 branch（不是 id_ex_branch）
+    always_comb begin
+        case (instr[14:12])
+            3'b000:  branch_taken = branch &  zero;          // beq
+            3'b001:  branch_taken = branch & ~zero;          // bne
+            3'b100:  branch_taken = branch &  alu_result[0]; // blt
+            3'b101:  branch_taken = branch & ~alu_result[0]; // bge
+            3'b110:  branch_taken = branch &  alu_result[0]; // bltu
+            3'b111:  branch_taken = branch & ~alu_result[0]; // bgeu
+            default: branch_taken = 1'b0;
+        endcase
+    end
     // -- 5. 下一条 PC 选择 ---------------------------------
     // 优先级：跳转 > 分支 > 顺序 +4
     assign pc_next = jump         ? jump_target

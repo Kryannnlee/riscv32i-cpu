@@ -58,7 +58,9 @@ rv32i-cpu/
 阶段6 冒险处理   ✅ 6a 复现 · 6b 转发 · 6c load-use 停顿 · 6d 分支冲刷
 指令集补齐       ✅ LUI · AUIPC · JAL · JALR（RV32I 常用子集完整）
 上板验证         ✅ 首次上板成功（x1=76 正确），引脚 U18/T19/T10
-阶段7 跑C/上板/论文 ▶ 下一步：字节访存 → UART → C 工具链
+阶段7a 字节访存   ✅ lb/lbu/lh/lhu/sb/sh + load_extend
+指令集完整性      ✅ 六种分支齐全（beq/bne/blt/bge/bltu/bgeu）
+阶段7b UART       ⬜ 下一步（TX=K19 RX=J19，参考官方 ch05/ch06）
 ```
 
 ---

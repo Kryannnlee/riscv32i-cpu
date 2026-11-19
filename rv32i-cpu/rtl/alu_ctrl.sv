@@ -35,7 +35,13 @@ module alu_ctrl (
             2'b00 : alu_sel = 4'd0;
 
             // 分支：beq/bne 做减法，靠 ALU 的 zero 输出判断两数是否相等
-            2'b01 : alu_sel = 4'd1;
+            2'b01 : alu_sel = (funct3 == 3'b000) ? 4'd1 : // beq
+                              (funct3 == 3'b001) ? 4'd1 : // bne
+                              (funct3 == 3'b100) ? 4'd5 : // blt
+                                (funct3 == 3'b101) ? 4'd5 : // bge
+                                (funct3 == 3'b110) ? 4'd6 : // bltu
+                                (funct3 == 3'b111) ? 4'd6 : // bgeu
+                              4'd0;
 
             // R 型：funct3 定运算，ADD/SUB 还要靠 funct7 区分
             2'b10 : alu_sel = (funct3 == 3'b000 && funct7 == 7'b0000000) ? 4'd0 : // add
@@ -44,10 +50,17 @@ module alu_ctrl (
                               (funct3 == 3'b110) ? 4'd3 : // or
                               (funct3 == 3'b100) ? 4'd4 : // xor
                               (funct3 == 3'b010) ? 4'd5 : // slt
+                              (funct3 == 3'b011) ? 4'd6 : // sltu
+                                (funct3 == 3'b001) ? 4'd7 : // sll
+                                (funct3 == 3'b101 && funct7 == 7'b0000000) ? 4'd8 : // srl
+                                (funct3 == 3'b101 && funct7 == 7'b0100000) ? 4'd9 : // sra
                               4'd0;
 
             // I 型：只有 funct3，没有 funct7（立即数占了高 12 位）
             2'b11 : alu_sel = (funct3 == 3'b000) ? 4'd0 : // addi
+                            (funct3 == 3'b001) ? 4'd7 : // slli
+                            (funct3 == 3'b101 && funct7 == 7'b0000000) ? 4'd8 : // srli
+                            (funct3 == 3'b101 && funct7 == 7'b0100000) ? 4'd9 : // srai
                               (funct3 == 3'b010) ? 4'd5 : // slti
                               (funct3 == 3'b100) ? 4'd4 : // xori
                               (funct3 == 3'b110) ? 4'd3 : // ori

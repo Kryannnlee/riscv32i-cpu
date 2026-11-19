@@ -17,8 +17,13 @@
 //   读：rs == 0 时直接输出 0，不去读数组
 //   写：rd == 0 时忽略写使能，永远不写
 //   只做其中一处也能"看起来能用"，但会掩盖错误，两处都写才是规范做法。
+// 写优先旁路开关 BYPASS：
+//   流水线里必须打开（救"隔 3 条"的 RAW，见 cases/case-20）。
+//   单周期里必须关闭——单周期的 wr_data 直接来自当拍 ALU 结果，
+//   打开会形成组合环：alu_result -> wb_data -> rs1_data -> alu_a -> alu_result，
+//   仿真器会死循环。单周期也不存在距离 3 的相关（一拍就做完一条）。
 // ============================================================
-module regfile (
+module regfile #(parameter bit BYPASS = 1) (
     input  logic        clk,
     input  logic        rst,
     input  logic [4:0]  rs1,       // 读地址 1
@@ -39,8 +44,17 @@ module regfile (
 
     // 两个读口：组合读，地址给进去当拍就出数据
     // x0 特判：无论数组里存了什么，读出来永远是 0
-    assign rs1_data = (rs1 == 5'd0) ? 32'd0 : regs[rs1];
-    assign rs2_data = (rs2 == 5'd0) ? 32'd0 : regs[rs2];
+    //
+    // 写优先旁路（write-first bypass）：
+    //   同一拍里既在写 rd、又有人读同一个 rd 时，读口直接返回 wr_data。
+    //   没有这一条的话，"隔 3 条"的 RAW 会读到旧值：
+    //     第 N 条在 WB 写寄存器（时钟沿生效）
+    //     第 N+3 条在 ID 读同一个寄存器（同一拍，沿之前）→ 读到旧值
+    //   EX 级转发救不了，因为第 N 条这时已经离开 MEM/WB 了。
+    assign rs1_data = (rs1 == 5'd0) ? 32'd0 :
+                      ((BYPASS && we && (rd == rs1)) ? wr_data : regs[rs1]);
+    assign rs2_data = (rs2 == 5'd0) ? 32'd0 :
+                      ((BYPASS && we && (rd == rs2)) ? wr_data : regs[rs2]);
 
     // 调试：x1 直出。综合时这条连线让寄存器堆有可观测的输出，不会被优化掉
     assign dbg_x1 = regs[1];

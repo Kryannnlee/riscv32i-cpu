@@ -49,11 +49,11 @@ Tier 3 加分   Dhrystone 等基准 + 性能/资源数据 + 中断/显示
 
 ## 5b. 待办（Backlog）
 
-- [ ] **安装 Verilator（Lint）**：在 **VMware Ubuntu 虚拟机**里 `sudo apt install verilator`（或 WSL）。
-  触发时机：V2 流水线前后（代码变复杂时）。
-- [ ] **安装 RISC-V 工具链**（`riscv64-unknown-elf-gcc`）：VMware Ubuntu 里装。
-  触发时机：P4 跑 C 程序前。
-- [ ] 确认 ACZ702 板子 CH343P 走到 PS 还是 PL（P5 前）。
+- [x] **安装 Verilator（Lint）** —— VMware Ubuntu 里已装
+- [x] **安装 RISC-V 工具链** —— `riscv64-unknown-elf-gcc 10.2.0` 已装（VMware Ubuntu）
+- [x] **确认串口走 PS 还是 PL** —— 板载 Type-C 的 CH9102 是 **PS UART**（PL 碰不到）；
+      外接 USB-TTL（**CP2102 = COM7**）接 GPIO0 的 K19 才是我们的
+- [ ] M 扩展 / 字符串 / printf / UART 接收 / 基准（见 2026-11-19 更新）
 
 ## 5. 每阶段验收（每块必须有 testbench 且跑通）
 
@@ -79,3 +79,38 @@ P3 已全部完成。
 下一步：P4 跑 C 程序（RISC-V 工具链 + MMIO），或先做 P5 上板（UART）。
 
 详细改动见 `progress.md` [014]。
+
+### 更新（2026-11-19）★ Tier 2 达成：C 程序上板跑通
+
+- [x] UART 发送（TX=K19）+ MMIO `0x3000`（写 = 发字节，读 = busy）
+- [x] C 工具链（VMware Ubuntu + `riscv64-unknown-elf-gcc 10.2.0`）+ `crt0` + 链接脚本
+- [x] imem / dmem 扩到 4KB（1024 字），`imem` 加 `USE_FILE` 参数用 `$readmemh` 加载 C 程序
+- [x] 上板验证：串口 COM7 收到 `SUM=55`
+- [x] ALU 补齐移位（`sll/srl/sra`），修掉"移位一律返回 0"的静默错误
+- 资源：2112 LUT（3.97%）/ 0 BRAM / Fmax 63.6MHz
+
+**答辩时间：2027 年 5~6 月**（原计划的"1 月前"只是自设的硬件节点，不是硬性截止）
+
+#### 11 月剩余：硬件收尾
+
+| # | 任务 | 时间 | 说明 |
+| --- | --- | --- | --- |
+| 1 | **M 扩展**（乘 + 除） | 11-20 ~ 11-23 | 乘法好做；除法需自写除法器（或改软件库） |
+| 2 | **字符串能读** | 11-24 ~ 11-26 | `.rodata` 从 IMEM 挪到 DMEM + 数据段 `$readmemh` |
+| 3 | **自制 printf** | 同上 | 依赖 #2 |
+| 4 | **UART 接收** | 11-27 ~ 11-28 | `uart_rx.sv` + MMIO 读 + `getchar` |
+| 5 | **内存扩展 + 基准** | 11-29 ~ 11-30 | Dhrystone / CoreMark，论文性能章节 |
+
+#### 12 月：补课（所有权回收）
+
+- 关3：上板 / Vivado 流程
+- 关4：CPI 统计修复
+- 今天这套 C 链路（MMIO、crt0、link.ld）——全是我写的，必须能自己讲
+
+#### 2027 年：论文
+
+| 时间 | 内容 |
+| --- | --- |
+| 1~3 月 | 八章初稿（第 1 章绪论最费劲，其余多为改写已有素材） |
+| 4 月 | 画图、查重、格式、改导师意见 |
+| 5~6 月 | 答辩准备 |

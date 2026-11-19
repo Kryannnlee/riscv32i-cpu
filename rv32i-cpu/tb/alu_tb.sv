@@ -48,6 +48,64 @@ module alu_tb;
         a=-32'd1; b=32'd1; alu_sel=4'd5; #1;
         if(result === 32'd1) $display("PASS SLT: %0d",result);
         else                  $display("FAIL SLT: got %0d", result);
+        // 测试8：SLTU 无符号比较——和有符号 SLT 结果相反的场景
+        // -1 当作无符号是 0xFFFFFFFF（42 亿），比 1 大
+        a=-32'd1; b=32'd1; alu_sel=4'd6; #1;
+        if(result === 32'd0) $display("PASS SLTU: -1 <u 1 = %0d",result);
+        else                  $display("FAIL SLTU: -1 <u 1 got %0d (应为 0)", result);
+
+        // 1 比 0xFFFFFFFF 小
+        a=32'd1; b=-32'd1; alu_sel=4'd6; #1;
+        if(result === 32'd1) $display("PASS SLTU: 1 <u -1 = %0d",result);
+        else                  $display("FAIL SLTU: 1 <u -1 got %0d (应为 1)", result);
+
+        // 两个都正数时，有符号无符号结果相同
+        a=32'd2; b=32'd3; alu_sel=4'd6; #1;
+        if(result === 32'd1) $display("PASS SLTU: 2 <u 3 = %0d",result);
+        else                  $display("FAIL SLTU: 2 <u 3 got %0d", result);
+
+        // 0x80000000 有符号是最小负数（< 0），无符号是 21 亿（> 0）
+        a=32'h8000_0000; b=32'd0; alu_sel=4'd6; #1;
+        if(result === 32'd0) $display("PASS SLTU: 0x80000000 <u 0 = %0d",result);
+        else                  $display("FAIL SLTU: 0x80000000 <u 0 got %0d (应为 0)", result);
+        a=32'h8000_0000; b=32'd0; alu_sel=4'd5; #1;
+        if(result === 32'd1) $display("PASS SLT : 0x80000000 <s 0 = %0d",result);
+        else                  $display("FAIL SLT : 0x80000000 <s 0 got %0d (应为 1)", result);
+
+        // 测试9：移位 SLL / SRL / SRA
+        // 这三个运算以前落到 default 返回 0（静默错误），必须单独测
+        a=32'd1; b=32'd4; alu_sel=4'd7; #1;
+        if(result === 32'd16) $display("PASS SLL: 1<<4 = %0d",result);
+        else                  $display("FAIL SLL: got %0d (应为 16)", result);
+
+        // 移出去的高位直接丢掉
+        a=32'hFFFF_FFFF; b=32'd31; alu_sel=4'd7; #1;
+        if(result === 32'h8000_0000) $display("PASS SLL: 0xFFFFFFFF<<31 = 0x%08x",result);
+        else                         $display("FAIL SLL: got 0x%08x (应为 0x80000000)", result);
+
+        // 移位量只取低 5 位：1 << 32 等价于 1 << 0
+        a=32'd1; b=32'd32; alu_sel=4'd7; #1;
+        if(result === 32'd1) $display("PASS SLL: 移位量只取低5位 (1<<32 = %0d)",result);
+        else                  $display("FAIL SLL: got %0d (应为 1)", result);
+
+        // SRL 逻辑右移：高位补 0
+        a=32'h8000_0000; b=32'd4; alu_sel=4'd8; #1;
+        if(result === 32'h0800_0000) $display("PASS SRL: 0x80000000>>4 = 0x%08x",result);
+        else                         $display("FAIL SRL: got 0x%08x (应为 0x08000000)", result);
+
+        // SRA 算术右移：高位补符号位 1 —— 同一个输入，结果必须和 SRL 不同
+        a=32'h8000_0000; b=32'd4; alu_sel=4'd9; #1;
+        if(result === 32'hF800_0000) $display("PASS SRA: 0x80000000>>>4 = 0x%08x",result);
+        else                         $display("FAIL SRA: got 0x%08x (应为 0xF8000000)", result);
+
+        // 全 1 时两者才能看出来：SRL 高位补 0，SRA 保持全 1
+        a=32'hFFFF_FFFF; b=32'd4; alu_sel=4'd8; #1;
+        if(result === 32'h0FFF_FFFF) $display("PASS SRL: 0xFFFFFFFF>>4 = 0x%08x",result);
+        else                         $display("FAIL SRL: got 0x%08x (应为 0x0FFFFFFF)", result);
+        a=32'hFFFF_FFFF; b=32'd4; alu_sel=4'd9; #1;
+        if(result === 32'hFFFF_FFFF) $display("PASS SRA: 0xFFFFFFFF>>>4 = 0x%08x",result);
+        else                         $display("FAIL SRA: got 0x%08x (应为 0xFFFFFFFF)", result);
+
         // 测试7：zero 5-5=0 时 zero 应为 1
         a=32'd5; b=32'd5; alu_sel=4'd1; #1;
         if(zero === 1'b1) $display("PASS ZERO: %0b",zero);

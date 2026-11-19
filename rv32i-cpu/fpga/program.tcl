@@ -25,7 +25,7 @@ current_hw_device [get_hw_devices xc7z020_1]
 refresh_hw_device -update_hw_probes false [current_hw_device]
 
 # 4) 指定比特流并烧写
-set_property PROGRAM.FILE {D:/riscvpga/rv32i-cpu/fpga/prototype_rv32i/prototype_rv32i.runs/impl_1/fpga_top.bit} [current_hw_device]
+set_property PROGRAM.FILE {D:/riscvpga/rv32i-cpu/fpga/vivado_build/rv32i.runs/impl_1/fpga_top.bit} [current_hw_device]
 program_hw_devices [current_hw_device]
 refresh_hw_device [current_hw_device]
 

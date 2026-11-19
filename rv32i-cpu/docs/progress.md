@@ -273,3 +273,112 @@
 - 板载固定：clk=U18 / key=T19 / LED=T10（与我们一致）
 - 可选外部 LED：B20 / D19 / D20（ch09 用过）
 - 完整映射写入 `docs/13-vendor-reference.md` 第 6~7 节
+
+## [031] 阶段7a：字节/半字访存完成
+- `dmem`：加字节写使能 `be[3:0]`，按通道写；`initial` 清零全部
+- 新增 `rtl/load_extend.sv`：lb/lh 符号扩展、lbu/lhu 零扩展、lw 原样
+- `ex_mem`：新增 `funct3` 通路（访存大小/有无符号要传到 MEM 级）
+- `cpu_pipe`：字节使能 + **写数据对齐**（sb/sh 取 rs2 低位，摊到对应通道）
+- `cpu_top`（单周期）：同步支持，继续当等价性基准
+- 测试程序扩到 41 条：sb×2→lw、lb/lbu、sh→lh/lhu，覆盖符号扩展
+- 新增 `tb/load_extend_tb.sv`（14 个断言）；dmem_tb 扩到 5 组（含字节/半字写）
+- 全套 13 个 testbench 全绿
+- 踩坑：`cases/case-19-store-data-alignment.md`（sb 数据源取错）、case-17 补记（dmem 未初始化）
+
+## [032] load_extend 由用户重写并接入主设计
+- 用户写 `rtl/load_extend_mine.sv`，14 条断言一次通过
+- 过程中被编译器抓到一个错：声明 `b` 但用了 `byte_sel`（`default_nettype none` 生效，隐式线直接报错）
+- 已替换 `cpu_pipe` / `cpu_top` 中的实例化，全套 13 个 testbench 结果不变
+- 至此 **forward_unit / hazard_unit / load_extend 三个核心模块都是用户自己写的**
+
+## [033] 性能评估：实测 CPI
+- `cpu_pipe_tb` 增加性能计数：周期数、停顿次数、改道次数、最后一条写回时刻
+- **实测结果**（41 条测试程序）：
+  - 49 拍跑完，**CPI = 1.195**
+  - 无冒险理想 45 拍（CPI 1.098），冒险开销 4 拍
+  - 事件：load-use 停顿 1 拍，改道 4 次
+- **重要发现：简单加法模型不成立**
+  - 按 "N + 4 + 停顿 + 改道×2" 算出来是 54 拍，实测 49 拍，差 5 拍
+  - 说明"每次改道罚 2 拍"这个说法，与**吞吐**口径不一致：EX 里确实插了 2 个气泡，
+    但其中一个占的是"本来就要丢弃的顺取指令"的槽位，不额外损失吞吐
+  - **结论：性能数据必须实测，不能靠公式推**
+
+> ⚠️ **本条结论已作废，见 [036]。** 模型没错，错的是分母（用了静态条数 41 而不是执行条数 36）。
+- 踩坑：iverilog 不支持块内 `automatic` 声明；且编译失败时错误被 `sorry:` 过滤掉了，
+  白跑了一次旧 vvp
+
+## [034] 指令集补齐：blt/bge/bltu/bgeu + 两个设计漏洞
+- `alu` 新增 SLTU（无符号比较）；`alu_ctrl` 分支按 funct3 选 SUB/SLT/SLTU
+- `cpu_pipe` / `cpu_top` 的 branch_taken 补四条，用 `alu_result[0]` 判断
+- 测试程序扩到 57 条，用「1 和 -1」这组有符号/无符号结果相反的值验证
+- **发现漏洞 1：距离 3 的 RAW**（生产者 WB、消费者 ID 同拍）转发覆盖不到
+  → `regfile` 加写优先旁路，详见 `cases/case-20`
+- **发现漏洞 2：旁路在单周期形成组合环**，仿真死循环
+  → 加 `BYPASS` 参数，单周期关闭
+- 全套 13 个 testbench 全绿（alu 14 / alu_ctrl 18 / imem 58 / cpu 26 / cpu_pipe 28）
+
+## [035] UART 发送端完成（用户写 + 跑通）
+- `rtl/uart_tx.sv`：状态机（IDLE/START/DATA/STOP）+ 波特率分频，参数化（CLK_FREQ/BAUD_RATE）
+- `tb/uart_tx_tb.sv`：把串行流**解码回字节**验证，5 个字节（55/A3/00/FF/01）全过
+- **踩坑 1（设计）**：tx 做成寄存器输出 → 起始位 11 拍、其余 10 拍
+  → 改成 `always_comb` 组合输出，每位严格 10 拍。详见 `cases/case-21`
+- **踩坑 2（testbench）**：组合信号采样要加 `#1`；等电平用 while 不用 `@(negedge)`
+- 下一步：MMIO —— CPU 写某个地址 → 触发 UART 发送
+
+## [036] 修 CPI 统计：分母错了，模型其实一直是对的
+- `cpu_pipe_tb` 之前把 `PROG_LEN = 57`（imem 写了多少条）当 CPI 分母，
+  但 7 处跳转跳过 8 条，**实际执行 49 条**
+- 完成标记还盯在 `x30`，扩程序后它变成中途的 `mem[40]`，测的不是程序结束
+  → 改盯 `mem[56]` 写的 `x18`
+- 修完两边对上：`49(执行) + 4(填充) + 1(停顿) + 7×2(改道) = 68 拍`，实测 68 拍
+- **回头验算老版本**：41 条程序跳过 5 条 = 执行 36 条，
+  `36 + 4 + 1 + 4×2 = 49`，正是当时实测的 49 拍
+  → 证明 [033] 的"加法模型不成立"是分母错误造成的假象，模型一直准
+- 正确 CPI：**68/49 = 1.388**（旧值 0.860 是拿 57 当分母算的）
+- 性能公式升级为**断言**：实测 ≠ 预测就报错，不再只是打印
+- 全套 15 个 testbench 全绿
+- 档案：`cases/case-22-static-instr-count-cpi.md`；`09-pitfalls.md` 第 22 条
+
+## [037] ★ C 程序在 FPGA 上跑通（工具链 + MMIO + UART）
+- **目标提前达成**：原计划 11-30，实际 11-19 完成
+- 工具链：VMware Ubuntu（Brandys-wonderland）里的 `riscv64-unknown-elf-gcc 10.2.0`
+  - Windows 侧没有工具链，WSL 也没装发行版；共享文件夹 `~/myshare/riscvpga` ↔ `D:\riscvpga`
+- 内存：imem / dmem 从 256 字扩到 **1024 字（4KB）**，索引改 `addr[11:2]`
+- `imem` 加参数 `USE_FILE`：0 = 手写测试程序（所有老 testbench 用），1 = `$readmemh` 加载 C 程序
+- **MMIO**：`0x3000` 写 = 串口发一个字节，读 = busy 状态
+  - `cpu_pipe` 里按 `addr[31:12] == 0x3` 译码
+  - 写 MMIO 时必须**挡住 dmem 写**（0x3000 的 `addr[11:2]` 恰好是 0，不挡会踩 `dmem[0]`）
+- 软件：`sw/start.S`（crt0 设 sp）、`sw/link.ld`、`sw/main.c`、`sw/bin2hex.py`、`sw/build.sh`
+- 链接脚本内存布局：`.text` @ 0x0，`.data/.bss` @ 0x1000，栈顶 0x2000
+- 验证链：`cpu_uart_tb` 把串口波形**解码回字节**，8 个字节全对
+- **上板结果**：LED 心跳正常，串口 COM7 收到 `SUM=55`（8 字节：53 55 4D 3D 35 35 0D 0A）
+- 综合/实现：**2112 LUT（3.97%）/ 0 BRAM / WNS +4.284ns → Fmax ≈ 63.6MHz**
+  - imem 被映射成 LUT-ROM，dmem 成分布式 RAM，**两者都保持组合读**（case-16 没复发）
+- **踩坑**（已建档案）：
+  1. C 里不能用字符串字面量——`.rodata` 在 IMEM，而 `lw` 只走 dmem（哈佛结构）
+     → `cases/case-23-rodata-in-imem.md`
+  2. `$readmemh` 相对路径在 Vivado 里不一定解析得到 → `prepare_sources.py` 注成绝对路径
+     → `cases/case-24-readmemh-relative-path.md`（同篇附 `open_run` 的坑）
+  3. `launch_runs` 在后台进程执行，直接 `report_*` 报 "No open design"，要先 `open_run`
+  4. CP2102 缺驱动；**CH9102(COM6) 是核心板 Type-C 的 PS UART**，外接 USB-TTL 是 COM7
+  5. 程序只打印一次，**串口必须先打开再复位/烧写**，否则数据发完就丢了
+- 顺带发现：`j .` 在五级流水线里**每 3 拍执行一次**（2 拍冲刷惩罚），不是"PC 停住"
+- 全套 **17 个 testbench 全绿**（新增 cpu_c_tb 冒烟测试 + cpu_uart_tb 端到端）
+
+## [038] 修 ALU 移位缺失 + 重新上板
+- **发现**：`alu_ctrl` 会输出 `alu_sel = 7/8/9`（`sll`/`srl`/`sra`/`slli`/`srli`/`srai`），
+  但 `alu.sv` 只实现到 6，三个移位全落到 `default` 返回 **0**
+  → 又一处静默错误：程序照跑，结果全错，不报任何错
+- **为什么没被发现**：imem 里 57 条测试程序一条移位都没有，17 个 testbench 全绿也抓不到
+- **修**：`alu.sv` 补 `ALU_SLL/SRL/SRA`
+  - 移位量一律取 `b[4:0]`（RISC-V 规定只取低 5 位，`1<<32` 等价于 `1<<0`）
+  - `SRA` 必须写 `$signed(a) >>> b[4:0]`，否则退化成逻辑右移
+- `tb/alu_tb.sv` 补 **7 条断言**（14 → 21 条）：
+  - `1<<32 == 1`（移位量只取低 5 位）
+  - `0x80000000 >> 4 = 0x08000000` vs `>>> 4 = 0xF8000000`（SRL/SRA 必须不同）
+  - `0xFFFFFFFF >> 4 = 0x0FFFFFFF` vs `>>> 4 = 0xFFFFFFFF`
+- 重新综合：**2112 LUT / 0 BRAM / WNS +4.284ns**，与修前一致
+  （移位器只占几条 LUT，不在关键路径上）
+- 重新上板验证：COM7 收到 `SUM=55`
+- **遗留**：移位只有 ALU 单元测试，没有"整条 CPU 跑移位指令"的端到端测试
+  （往 57 条程序里加会牵动 PROG_WORDS/PROG_RETIRED 和三个 testbench）

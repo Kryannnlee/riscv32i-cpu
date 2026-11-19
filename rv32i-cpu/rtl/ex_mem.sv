@@ -33,6 +33,8 @@ module ex_mem (
     input  logic        zero_in,
     input  logic [4:0]  rd_in,
     input  logic [31:0] pc4_in,
+    // funct3 要传到 MEM 级：访存的大小（b/h/w）和有无符号都靠它
+    input  logic [2:0]  funct3_in,
 
     // -- 控制信号（随行）--
     input  logic        reg_write_in,
@@ -48,6 +50,7 @@ module ex_mem (
     output logic        zero_out,
     output logic [4:0]  rd_out,
     output logic [31:0] pc4_out,
+    output logic [2:0]  funct3_out,
     output logic        reg_write_out,
     output logic        mem_read_out,
     output logic        mem_write_out,
@@ -63,6 +66,7 @@ module ex_mem (
             zero_out       <= 1'b0;
             rd_out         <= 5'b0;
             pc4_out        <= 32'b0;
+            funct3_out     <= 3'b0;
             reg_write_out  <= 1'b0;
             mem_read_out   <= 1'b0;
             mem_write_out  <= 1'b0;
@@ -75,6 +79,7 @@ module ex_mem (
             zero_out       <= zero_in;
             rd_out         <= rd_in;
             pc4_out        <= pc4_in;
+            funct3_out     <= funct3_in;
             reg_write_out  <= reg_write_in;
             mem_read_out   <= mem_read_in;
             mem_write_out  <= mem_write_in;

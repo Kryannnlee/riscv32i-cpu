@@ -2,7 +2,7 @@
 `default_nettype none
 
 // ============================================================
-// imem -- 指令存储器（只读，1KB，256 个 32 位字）
+// imem -- 指令存储器（只读，4KB，1024 个 32 位字）
 //
 // 作用：给定 PC，取出那条 32 位指令。
 // 纯组合读：地址一变，指令当拍就出来（IF 级要靠这个速度）。
@@ -15,22 +15,25 @@
 //   PC 是**字节地址**，每隔 4 递增。数组按字编号，
 //   所以要用 addr[31:2]（= addr/4）做下标。
 //
-// ! 仿真专用的局限：
-//   下面的程序是 `initial` 里写死的，只在仿真时存在。
-//   上板时这份初值不存在，必须改成 $readmemh 从 .hex 文件加载。
-//   同时这也意味着 imem_tb / cpu_tb 断言的是"这份程序的内容"，
-//   改程序就得同步改这两个 testbench（耦合点，见 docs/commands.md 末尾）。
+// 两种内容来源，由参数 USE_FILE 选择：
+//   USE_FILE = 0（默认）：下面 initial 里手写的 57 条测试程序，所有单元测试用它
+//   USE_FILE = 1        ：$readmemh 从 sw/prog.hex 加载 C 编译器产出的程序
+//
+// 注意：切到 USE_FILE=1 后，imem_tb / cpu_tb 断言的是"手写程序的内容"，
+// 那些 testbench 必须保持 USE_FILE=0，否则会失败（耦合点，见 docs/commands.md 末尾）。
 // ============================================================
-module imem (
+module imem #(
+    parameter bit USE_FILE = 0        // 1 = 从 sw/prog.hex 加载 C 程序
+) (
     input  logic [31:0] addr,     // 字节地址（来自 PC）
     output logic [31:0] instr     // 取出的 32 位指令
 );
-    // 256 个 32 位字 = 1KB。索引范围 0~255，正好够 PC 低 10 位。
+    // 1024 个 32 位字 = 4KB。索引范围 0~1023，对应 addr[11:2]。
     // rom_style=distributed：强制用 LUT 拼 ROM，保证组合读
-    (* rom_style = "distributed" *) logic [31:0] mem [0:255];
+    (* rom_style = "distributed" *) logic [31:0] mem [0:1023];
 
     // 组合读：丢掉低 2 位（字节地址 -> 字下标）
-    assign instr = mem[addr[31:2]];
+    assign instr = mem[addr[11:2]];
 
     // -- 测试程序（仅仿真；上板时改用 $readmemh）----------------
     // 覆盖：转发 / load-use 停顿 / 分支冲刷
@@ -39,8 +42,14 @@ module imem (
     // 不填的话 mem[28..255] 是 X，综合器会把它们当"don't care"优化掉，
     // 程序跑完后 PC 取到未定义内容 -> X 传播 -> PC 变成 X -> LED 亮着不闪。
     initial begin
-        for (int i = 0; i < 256; i++)
+        for (int i = 0; i < 1024; i++)
             mem[i] = 32'h00000013;   // NOP
+
+        if (USE_FILE) begin
+            // ---- C 程序：由 sw/build.sh 生成 ----
+            // 路径相对仿真工作目录（sim/run.ps1 会切到工程根目录）
+            $readmemh("sw/prog.hex", mem);
+        end else begin
 
         // ---- 转发（6b）----
         mem[0]  = 32'h00500093;   // addi x1, x0, 5    -> x1 = 5
@@ -77,6 +86,40 @@ module imem (
         mem[25] = 32'h30900593;   // addi x11, x0, 777  （毒药，被跳过）
         mem[26] = 32'h00100C13;   // addi x24, x0, 1    -> x24 = 1
         mem[27] = 32'h12345A37;   // lui  x20, 0x12345  -> x20 = 0x12345000
+
+        // ---- 字节/半字访存 ----
+        mem[28] = 32'h02300C93;   // addi x25, x0, 0x23 -> x25 = 0x23
+        mem[29] = 32'h01900A23;   // sb   x25, 20(x0)   -> DMEM[20] = 0x23
+        mem[30] = 32'h00100C93;   // addi x25, x0, 1    -> x25 = 1
+        mem[31] = 32'h01900AA3;   // sb   x25, 21(x0)   -> DMEM[21] = 0x01
+        mem[32] = 32'h01402D03;   // lw   x26, 20(x0)   -> x26 = 0x00000123（小端拼回来）
+        mem[33] = 32'hFFF00C93;   // addi x25, x0, -1   -> x25 = 0xFFFFFFFF
+        mem[34] = 32'h01900B23;   // sb   x25, 22(x0)   -> DMEM[22] = 0xFF
+        mem[35] = 32'h01600D83;   // lb   x27, 22(x0)   -> x27 = 0xFFFFFFFF（符号扩展）
+        mem[36] = 32'h01604E03;   // lbu  x28, 22(x0)   -> x28 = 0x000000FF（零扩展）
+        mem[37] = 32'hFFE00C93;   // addi x25, x0, -2   -> x25 = 0xFFFFFFFE
+        mem[38] = 32'h01901C23;   // sh   x25, 24(x0)   -> DMEM[25:24] = 0xFFFE
+        mem[39] = 32'h01801E83;   // lh   x29, 24(x0)   -> x29 = 0xFFFFFFFE（符号扩展）
+        mem[40] = 32'h01805F03;   // lhu  x30, 24(x0)   -> x30 = 0x0000FFFE（零扩展）
+
+        // ---- 四条新分支：用有符号/无符号结果相反的取值 ----
+        mem[41] = 32'h00100693;   // addi x13, x0, 1    -> x13 = 1
+        mem[42] = 32'hFFF00713;   // addi x14, x0, -1   -> x14 = 0xFFFFFFFF
+        mem[43] = 32'h00E6C463;   // blt  x13, x14, +8  有符号 1 < -1 = 假 -> 不跳
+        mem[44] = 32'h06F00793;   // addi x15, x0, 111  -> x15 = 111（应执行）
+        mem[45] = 32'h00E6E463;   // bltu x13, x14, +8  无符号 1 < 42亿 = 真 -> 跳
+        mem[46] = 32'h0DE00793;   // addi x15, x0, 222  （应跳过）
+        mem[47] = 32'h00D75463;   // bge  x14, x13, +8  有符号 -1 >= 1 = 假 -> 不跳
+        mem[48] = 32'h14D00813;   // addi x16, x0, 333  -> x16 = 333（应执行）
+        mem[49] = 32'h00E6F463;   // bgeu x13, x14, +8  无符号 1 >= 42亿 = 假 -> 不跳
+        mem[50] = 32'h1BC00893;   // addi x17, x0, 444  -> x17 = 444（应执行）
+        mem[51] = 32'h00E6D463;   // bge  x13, x14, +8  有符号 1 >= -1 = 真 -> 跳
+        mem[52] = 32'h22B00913;   // addi x18, x0, 555  （应跳过）
+        mem[53] = 32'h29A00993;   // addi x19, x0, 666  -> x19 = 666（应执行）
+        mem[54] = 32'h00D77463;   // bgeu x14, x13, +8  无符号 42亿 >= 1 = 真 -> 跳
+        mem[55] = 32'h30900913;   // addi x18, x0, 777  （应跳过）
+        mem[56] = 32'h37800913;   // addi x18, x0, 888  -> x18 = 888（应执行）
+        end
     end
 
 endmodule

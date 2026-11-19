@@ -34,6 +34,11 @@ module alu(
     localparam logic [3:0] ALU_OR  = 4'd3;
     localparam logic [3:0] ALU_XOR = 4'd4;
     localparam logic [3:0] ALU_SLT = 4'd5;
+    localparam logic [3:0] ALU_SLTU = 4'd6;  
+    localparam logic [3:0] ALU_SLL = 4'd7;
+    localparam logic [3:0] ALU_SRL = 4'd8;
+    localparam logic [3:0] ALU_SRA = 4'd9;
+       
 
     // 组合输出：只要 result 变化就跟着变
     assign zero = (result == 32'd0);
@@ -47,6 +52,10 @@ module alu(
             ALU_XOR: result = a ^ b;
             // 有符号比较：高位被当成符号位，所以 -1 < 0 成立
             ALU_SLT: result = ($signed(a) < $signed(b)) ? 32'd1 : 32'd0;
+            ALU_SLTU: result = (a < b) ? 32'd1 : 32'd0;  // 无符号比较
+            ALU_SLL: result = a << b[4:0];     // 只取低 5 位作为移位数
+            ALU_SRL: result = a >> b[4:0];     // 逻辑右移，高位补 0
+            ALU_SRA: result = $signed(a) >>> b[4:0];  // 算术右移，高位补符号位
             default: result = 32'd0;          // 兜底，防止综合出锁存器
         endcase
     end

@@ -16,9 +16,16 @@ ziliao/
 
 # Vivado 工程产物（可由 fpga/*.tcl 重新生成）
 rv32i-cpu/fpga/prototype_rv32i/
+rv32i-cpu/fpga/vivado_build/
 rv32i-cpu/fpga/build/
+rv32i-cpu/fpga/*_impl.rpt
 rv32i-cpu/.Xil/
 *.log
 *.jou
 *.bit
 *.dcp
+
+# C 编译产物（prog.hex 保留，让没装工具链的人也能跑仿真）
+rv32i-cpu/sw/prog.elf
+rv32i-cpu/sw/prog.bin
+rv32i-cpu/sw/prog.dis
