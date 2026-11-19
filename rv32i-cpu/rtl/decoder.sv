@@ -23,11 +23,12 @@
 //
 // 已覆盖 RV32I 里本设计用到的 9 种 opcode：
 //   R 型 / I 型算术 / lw / sw / 条件分支 / LUI / AUIPC / JAL / JALR
+// 条件分支的 opcode 只有一个，六种（beq/bne/blt/bge/bltu/bgeu）
+// 全靠 funct3 在 alu_ctrl 和 cpu_pipe 的 branch_taken 里区分。
 // 其余 opcode 走 default，全部得到 0 -> 等于 NOP。
 //
-// 还没做的（跑 C 程序之前可能要补）：
-//   FENCE / ECALL / EBREAK / CSR 系列
-//   以及 B 型里除 beq/bne 之外的 blt/bge/bltu/bgeu
+// 没做的（当前的 C 程序用不到）：
+//   FENCE / ECALL / EBREAK / CSR 系列；M 扩展（乘除）
 // ============================================================
 module decoder (
     input  logic [31:0] instr,      // 整条指令（取 [6:0] 作为 opcode）
