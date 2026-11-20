@@ -69,6 +69,7 @@ module load_extend_tb;
         if (errors == 0) $display("==== LOAD_EXTEND ALL PASS ====");
         else             $display("==== LOAD_EXTEND FAIL: %0d ====", errors);
 
+        if (errors > 0) $fatal(1, "%0d 处断言失败", errors);
         $finish;
     end
 

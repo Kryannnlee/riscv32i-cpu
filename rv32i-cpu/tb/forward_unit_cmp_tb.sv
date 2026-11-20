@@ -80,6 +80,7 @@ module forward_unit_cmp_tb;
         else
             $display("==== NOT EQUIVALENT ====");
 
+        if (errors > 0) $fatal(1, "%0d 处断言失败", errors);
         $finish;
     end
 

@@ -76,6 +76,7 @@ module cpu_c_tb;
         end else begin
             $display("==== C SMOKE FAIL ====");
         end
+        if (errors > 0) $fatal(1, "%0d 处断言失败", errors);
         $finish;
     end
 

@@ -97,6 +97,7 @@ module cpu_uart_tb;
             $display("==== UART PROGRAM PASS ====");
         else
             $display("==== UART PROGRAM FAIL（%0d 个字节不对）====", errors);
+        if (errors > 0) $fatal(1, "%0d 处断言失败", errors);
         $finish;
     end
 

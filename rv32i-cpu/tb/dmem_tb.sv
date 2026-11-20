@@ -73,6 +73,7 @@ module dmem_tb;
         if (errors == 0) $display("==== DMEM ALL PASS ====");
         else             $display("==== DMEM FAIL: %0d ====", errors);
 
+        if (errors > 0) $fatal(1, "%0d 处断言失败", errors);
         $finish;
     end
 

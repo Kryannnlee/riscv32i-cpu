@@ -88,6 +88,7 @@ module imem_tb;
         if (errors == 0) $display("==== IMEM ALL PASS ====");
         else             $display("==== IMEM FAIL: %0d 处错误 ====", errors);
 
+        if (errors > 0) $fatal(1, "%0d 处断言失败", errors);
         $finish;
     end
 endmodule
