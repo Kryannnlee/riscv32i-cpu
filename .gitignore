@@ -25,7 +25,10 @@ rv32i-cpu/.Xil/
 *.bit
 *.dcp
 
-# C 编译产物（prog.hex 保留，让没装工具链的人也能跑仿真）
+# C 编译产物（prog.hex / prog_data.hex 保留，让没装工具链的人也能跑仿真）
 rv32i-cpu/sw/prog.elf
 rv32i-cpu/sw/prog.bin
 rv32i-cpu/sw/prog.dis
+rv32i-cpu/sw/prog.data
+rv32i-cpu/sw/bench.elf
+rv32i-cpu/sw/bench.dis

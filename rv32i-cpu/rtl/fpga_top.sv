@@ -17,6 +17,7 @@ module fpga_top (
     input  logic       rst_n,    // 复位按键，低有效，T19
     output logic [3:0] led,
     output logic       uart_tx,  // 串口发送，K19（接 USB-TTL 的 RX）
+    input  logic       uart_rx,  // 串口接收，J19（接 USB-TTL 的 TX）
     // 所有寄存器的异或（单比特）。没有任何实际用途，
     // 存在的目的是让 32 个通用寄存器全部"可观测"，
     // 否则综合器会把没人读的寄存器当死代码删掉，资源统计就不准了
@@ -50,7 +51,8 @@ module fpga_top (
         .dbg_pc      (dbg_pc),
         .dbg_x1      (dbg_x1),
         .dbg_xor_all (dbg_xor_all),
-        .uart_tx     (uart_tx)
+        .uart_tx     (uart_tx),
+        .uart_rx     (uart_rx)
     );
 
     // -- 调试输出 --

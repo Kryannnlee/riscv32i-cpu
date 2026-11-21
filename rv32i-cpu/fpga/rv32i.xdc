@@ -39,3 +39,9 @@ set_property IOSTANDARD LVCMOS33 [get_ports dbg_alive]
 # 引脚来自 docs/13-vendor-reference.md（官方例程 ch05/ch06 的 uart 端口）
 set_property PACKAGE_PIN K19     [get_ports uart_tx]
 set_property IOSTANDARD LVCMOS33 [get_ports uart_tx]
+
+# ---- UART RX：接 USB-TTL 模块的 TXD ----
+# 上拉很重要：串口空闲时线上必须是高电平，否则会被当成一直在收起始位
+set_property PACKAGE_PIN J19     [get_ports uart_rx]
+set_property IOSTANDARD LVCMOS33 [get_ports uart_rx]
+set_property PULLUP true         [get_ports uart_rx]

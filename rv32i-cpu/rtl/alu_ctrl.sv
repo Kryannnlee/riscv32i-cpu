@@ -44,7 +44,14 @@ module alu_ctrl (
                               4'd0;
 
             // R 型：funct3 定运算，ADD/SUB 还要靠 funct7 区分
-            2'b10 : alu_sel = (funct3 == 3'b000 && funct7 == 7'b0000000) ? 4'd0 : // add
+            // M 扩展（funct7 = 0000001）：只实现乘法，除法留软件
+            2'b10 : alu_sel = (funct7 == 7'b0000001) ? (
+                                (funct3 == 3'b000) ? 4'd10 :   // mul
+                                (funct3 == 3'b001) ? 4'd11 :   // mulh
+                                (funct3 == 3'b010) ? 4'd12 :   // mulhsu
+                                (funct3 == 3'b011) ? 4'd13 :   // mulhu
+                                4'd14) :                       // div/divu/rem/remu 未实现
+                              (funct3 == 3'b000 && funct7 == 7'b0000000) ? 4'd0 : // add
                               (funct3 == 3'b000 && funct7 == 7'b0100000) ? 4'd1 : // sub
                               (funct3 == 3'b111) ? 4'd2 : // and
                               (funct3 == 3'b110) ? 4'd3 : // or

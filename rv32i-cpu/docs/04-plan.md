@@ -52,8 +52,8 @@ Tier 3 加分   Dhrystone 等基准 + 性能/资源数据 + 中断/显示
 - [x] **安装 Verilator（Lint）** —— VMware Ubuntu 里已装
 - [x] **安装 RISC-V 工具链** —— `riscv64-unknown-elf-gcc 10.2.0` 已装（VMware Ubuntu）
 - [x] **确认串口走 PS 还是 PL** —— 板载 Type-C 的 CH9102 是 **PS UART**（PL 碰不到）；
-      外接 USB-TTL（**CP2102 = COM7**）接 GPIO0 的 K19 才是我们的
-- [ ] M 扩展 / 字符串 / printf / UART 接收 / 基准（见 2026-11-19 更新）
+      外接 USB-TTL（**CP2102 = COM7**）接 GPIO0 的 K19/J19 才是我们的
+- [x] M 扩展 / 字符串 / printf / UART 接收 / 基准 —— **全部完成**（见 progress [039]~[042]）
 
 ## 5. 每阶段验收（每块必须有 testbench 且跑通）
 
@@ -93,13 +93,15 @@ P3 已全部完成。
 
 #### 11 月剩余：硬件收尾
 
-| # | 任务 | 时间 | 说明 |
+| # | 任务 | 状态 | 结果 |
 | --- | --- | --- | --- |
-| 1 | **M 扩展**（乘 + 除） | 11-20 ~ 11-23 | 乘法好做；除法需自写除法器（或改软件库） |
-| 2 | **字符串能读** | 11-24 ~ 11-26 | `.rodata` 从 IMEM 挪到 DMEM + 数据段 `$readmemh` |
-| 3 | **自制 printf** | 同上 | 依赖 #2 |
-| 4 | **UART 接收** | 11-27 ~ 11-28 | `uart_rx.sv` + MMIO 读 + `getchar` |
-| 5 | **内存扩展 + 基准** | 11-29 ~ 11-30 | Dhrystone / CoreMark，论文性能章节 |
+| 1 | **M 扩展** | ✅ 11-21 | 硬件 `mul/mulh/mulhu/mulhsu`；除法走软件（组合除法器实测 82.6ns，做不了） |
+| 2 | **字符串能读** | ✅ 11-21 | `.rodata` 挪到 DMEM + 数据段 `$readmemh` |
+| 3 | **自制 printf** | ✅ 11-21 | `%d %u %x %c %s` |
+| 4 | **UART 接收** | ✅ 11-21 | `uart_rx.sv` + MMIO + `getchar_`，端到端回显验证 |
+| 5 | **内存扩展 + 基准** | ✅ 11-21 | IMEM 8KB / DMEM 16KB；**Dhrystone 43,029/s = 0.49 DMIPS/MHz** |
+
+**硬件部分全部完成。** 下一步是 12 月的补课和 2027 年的论文。
 
 #### 12 月：补课（所有权回收）
 

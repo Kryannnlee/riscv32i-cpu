@@ -28,12 +28,12 @@ module imem #(
     input  logic [31:0] addr,     // 字节地址（来自 PC）
     output logic [31:0] instr     // 取出的 32 位指令
 );
-    // 1024 个 32 位字 = 4KB。索引范围 0~1023，对应 addr[11:2]。
+    // 2048 个 32 位字 = 8KB。索引范围 0~2047，对应 addr[12:2]。
     // rom_style=distributed：强制用 LUT 拼 ROM，保证组合读
-    (* rom_style = "distributed" *) logic [31:0] mem [0:1023];
+    (* rom_style = "distributed" *) logic [31:0] mem [0:2047];
 
     // 组合读：丢掉低 2 位（字节地址 -> 字下标）
-    assign instr = mem[addr[11:2]];
+    assign instr = mem[addr[12:2]];
 
     // -- 测试程序（仅仿真；上板时改用 $readmemh）----------------
     // 覆盖：转发 / load-use 停顿 / 分支冲刷
@@ -42,7 +42,7 @@ module imem #(
     // 不填的话 mem[28..255] 是 X，综合器会把它们当"don't care"优化掉，
     // 程序跑完后 PC 取到未定义内容 -> X 传播 -> PC 变成 X -> LED 亮着不闪。
     initial begin
-        for (int i = 0; i < 1024; i++)
+        for (int i = 0; i < 2048; i++)
             mem[i] = 32'h00000013;   // NOP
 
         if (USE_FILE) begin

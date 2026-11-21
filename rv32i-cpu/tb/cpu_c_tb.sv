@@ -31,7 +31,8 @@ module cpu_c_tb;
         .dbg_pc      (dbg_pc),
         .dbg_x1      (dbg_x1),
         .dbg_xor_all (dbg_xor_all),
-        .uart_tx     (uart_tx)
+        .uart_tx     (uart_tx),
+        .uart_rx     (1'b1)          // 本 tb 不测接收，让线上保持空闲高电平
     );
 
     always #5 clk = ~clk;

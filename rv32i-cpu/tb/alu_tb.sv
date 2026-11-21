@@ -106,6 +106,37 @@ module alu_tb;
         if(result === 32'hFFFF_FFFF) $display("PASS SRA: 0xFFFFFFFF>>>4 = 0x%08x",result);
         else                         $display("FAIL SRA: got 0x%08x (应为 0xFFFFFFFF)", result);
 
+        // 测试10：M 扩展乘法
+        // 低 32 位：有符号无符号结果相同
+        a=32'd3; b=32'd4; alu_sel=4'd10; #1;
+        if(result === 32'd12) $display("PASS MUL: 3*4 = %0d",result);
+        else                  $display("FAIL MUL: got %0d (应为 12)", result);
+
+        a=32'hFFFF_FFFF; b=32'hFFFF_FFFF; alu_sel=4'd10; #1;
+        if(result === 32'd1) $display("PASS MUL: 0xFFFFFFFF^2 低32位 = %0d",result);
+        else                 $display("FAIL MUL: got %0d (应为 1)", result);
+
+        // 关键一组：同样 a=b=0xFFFFFFFF，三种"高半"必须给三个不同答案
+        //   mulh   ：-1 × -1 = 1            -> 高半 0x00000000
+        //   mulhu  ：(2^32-1)^2             -> 高半 0xFFFFFFFE
+        //   mulhsu ：-1 × (2^32-1)          -> 高半 0xFFFFFFFF
+        a=32'hFFFF_FFFF; b=32'hFFFF_FFFF; alu_sel=4'd11; #1;
+        if(result === 32'h0000_0000) $display("PASS MULH  : 高半 = 0x%08x",result);
+        else                         $display("FAIL MULH  : got 0x%08x (应为 0x00000000)", result);
+
+        a=32'hFFFF_FFFF; b=32'hFFFF_FFFF; alu_sel=4'd13; #1;
+        if(result === 32'hFFFF_FFFE) $display("PASS MULHU : 高半 = 0x%08x",result);
+        else                         $display("FAIL MULHU : got 0x%08x (应为 0xFFFFFFFE)", result);
+
+        a=32'hFFFF_FFFF; b=32'hFFFF_FFFF; alu_sel=4'd12; #1;
+        if(result === 32'hFFFF_FFFF) $display("PASS MULHSU: 高半 = 0x%08x",result);
+        else                         $display("FAIL MULHSU: got 0x%08x (应为 0xFFFFFFFF)", result);
+
+        // 有符号高半：0x80000000 = -2^31，乘 2 得 -2^32，高半全 1
+        a=32'h8000_0000; b=32'd2; alu_sel=4'd11; #1;
+        if(result === 32'hFFFF_FFFF) $display("PASS MULH  : -2^31*2 高半 = 0x%08x",result);
+        else                         $display("FAIL MULH  : got 0x%08x (应为 0xFFFFFFFF)", result);
+
         // 测试7：zero 5-5=0 时 zero 应为 1
         a=32'd5; b=32'd5; alu_sel=4'd1; #1;
         if(zero === 1'b1) $display("PASS ZERO: %0b",zero);

@@ -25,8 +25,9 @@ DST = "fpga/build"
 os.makedirs(DST, exist_ok=True)
 
 # $readmemh 的路径要和仿真保持一致，但 Vivado 的工作目录不一定是工程根目录，
-# 相对路径可能找不到 prog.hex。综合副本里换成绝对路径。
-HEX_ABS = os.path.abspath("sw/prog.hex").replace("\\", "/")
+# 相对路径可能找不到进文件。综合副本里换成绝对路径。
+HEX_ABS  = os.path.abspath("sw/prog.hex").replace("\\", "/")
+DATA_ABS = os.path.abspath("sw/prog_data.hex").replace("\\", "/")
 
 files = sorted(glob.glob(os.path.join(SRC, "*.sv")))
 for f in files:
@@ -34,8 +35,10 @@ for f in files:
     text = text.replace("`default_nettype none\n", "")
     text = text.replace("`default_nettype wire", "")
     text = text.replace('"sw/prog.hex"', '"%s"' % HEX_ABS)
+    text = text.replace('"sw/prog_data.hex"', '"%s"' % DATA_ABS)
     out = os.path.join(DST, os.path.basename(f))
     open(out, "w", encoding="utf-8", newline="\n").write(text)
 
 print(f"prepared {len(files)} files -> {DST}/")
 print(f"readmemh path -> {HEX_ABS}")
+print(f"readmemh data -> {DATA_ABS}")

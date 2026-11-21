@@ -19,6 +19,7 @@ module cpu_uart_tb;
     logic        rst = 1'b1;
     logic [31:0] dbg_pc, dbg_x1, dbg_xor_all;
     logic        uart_tx;
+    logic        uart_rx_line = 1'b1;   // 空闲时线上为高，由本 tb 驱动
 
     cpu_pipe #(
         .USE_FILE      (1),
@@ -30,13 +31,15 @@ module cpu_uart_tb;
         .dbg_pc      (dbg_pc),
         .dbg_x1      (dbg_x1),
         .dbg_xor_all (dbg_xor_all),
-        .uart_tx     (uart_tx)
+        .uart_tx     (uart_tx),
+        .uart_rx     (uart_rx_line)  // 由下面的 send_byte 驱动
     );
 
     always #5 clk = ~clk;           // 100MHz 仿真时钟
 
-    // 期望收到的 8 个字节："SUM=55" + CR + LF
-    localparam int NBYTES = 8;
+    // 期望收到 41 个字节：
+    //   "Hello!\r\n" + "A=42\r\n" + "B=8\r\n" + "C=2\r\n" + "beef ok!\r\n" + "got K\r\n"
+    localparam int NBYTES = 41;
     logic [7:0] expect_bytes [0:NBYTES-1];
     logic [7:0] got_bytes    [0:NBYTES-1];
 
@@ -45,31 +48,89 @@ module cpu_uart_tb;
     logic [7:0] b;
     bit finished = 0;
 
+    // 向 CPU 发一个字节。
+    // 每位 8 拍，和 DUT 的 UART_CLK_FREQ/UART_BAUD_RATE = 8MHz/1MHz 一致。
+    // 参数名不能叫 b（模块级已有同名变量），也不能叫 expect（SV 关键字）。
+    int j;
+    task automatic send_byte(input logic [7:0] byte_v);
+        begin
+            uart_rx_line = 1'b0;                      // 起始位
+            repeat (8) @(posedge clk);
+            for (j = 0; j < 8; j++) begin
+                uart_rx_line = byte_v[j];             // 低位先发
+                repeat (8) @(posedge clk);
+            end
+            uart_rx_line = 1'b1;                      // 停止位
+            repeat (8) @(posedge clk);
+        end
+    endtask
+
     // 超时看门狗：C 程序不发数据的话，接收循环会永远等下去
     initial begin
-        #500_000;
+        #2_000_000;      // 软件除法是 32 次移位循环，比原来慢很多，余量给足
         if (!finished) begin
-            $display("  FAIL   超时：%0d ns 内只收到 %0d 个字节", 500_000, n);
+            $display("  FAIL   超时：%0d ns 内只收到 %0d 个字节", 2_000_000, n);
             $display("==== UART PROGRAM FAIL ====");
             $finish;
         end
     end
 
     initial begin
-        expect_bytes[0] = 8'h53;  // 'S'
-        expect_bytes[1] = 8'h55;  // 'U'
-        expect_bytes[2] = 8'h4D;  // 'M'
-        expect_bytes[3] = 8'h3D;  // '='
-        expect_bytes[4] = 8'h35;  // '5'
-        expect_bytes[5] = 8'h35;  // '5'
-        expect_bytes[6] = 8'h0D;  // CR
-        expect_bytes[7] = 8'h0A;  // LF
+        // "Hello!\r\n" —— 这 8 个字节来自 .rodata，读得到就说明数据段加载成功
+        expect_bytes[0]  = 8'h48;  // 'H'
+        expect_bytes[1]  = 8'h65;  // 'e'
+        expect_bytes[2]  = 8'h6C;  // 'l'
+        expect_bytes[3]  = 8'h6C;  // 'l'
+        expect_bytes[4]  = 8'h6F;  // 'o'
+        expect_bytes[5]  = 8'h21;  // '!'
+        expect_bytes[6]  = 8'h0D;  // CR
+        expect_bytes[7]  = 8'h0A;  // LF
+        expect_bytes[8]  = 8'h41;  // 'A'
+        expect_bytes[9]  = 8'h3D;  // '='
+        expect_bytes[10] = 8'h34;  // '4'
+        expect_bytes[11] = 8'h32;  // '2'
+        expect_bytes[12] = 8'h0D;  // CR
+        expect_bytes[13] = 8'h0A;  // LF
+        expect_bytes[14] = 8'h42;  // 'B'
+        expect_bytes[15] = 8'h3D;  // '='
+        expect_bytes[16] = 8'h38;  // '8'
+        expect_bytes[17] = 8'h0D;  // CR
+        expect_bytes[18] = 8'h0A;  // LF
+        expect_bytes[19] = 8'h43;  // 'C'
+        expect_bytes[20] = 8'h3D;  // '='
+        expect_bytes[21] = 8'h32;  // '2'
+        expect_bytes[22] = 8'h0D;  // CR
+        expect_bytes[23] = 8'h0A;  // LF
+        // "beef ok!\r\n" —— 来自 printf_ 的 %x %s %c
+        expect_bytes[24] = 8'h62;  // 'b'
+        expect_bytes[25] = 8'h65;  // 'e'
+        expect_bytes[26] = 8'h65;  // 'e'
+        expect_bytes[27] = 8'h66;  // 'f'
+        expect_bytes[28] = 8'h20;  // ' '
+        expect_bytes[29] = 8'h6F;  // 'o'
+        expect_bytes[30] = 8'h6B;  // 'k'
+        expect_bytes[31] = 8'h21;  // '!'
+        expect_bytes[32] = 8'h0D;  // CR
+        expect_bytes[33] = 8'h0A;  // LF
+        // "got K\r\n" —— CPU 从串口收到 'K' 后回显，验证接收通路
+        expect_bytes[34] = 8'h67;  // 'g'
+        expect_bytes[35] = 8'h6F;  // 'o'
+        expect_bytes[36] = 8'h74;  // 't'
+        expect_bytes[37] = 8'h20;  // ' '
+        expect_bytes[38] = 8'h4B;  // 'K'  ← 就是 tb 发过去的那个字节
+        expect_bytes[39] = 8'h0D;  // CR
+        expect_bytes[40] = 8'h0A;  // LF
 
         $display("==== UART 端到端仿真（sw/prog.hex）====");
 
         rst = 1'b1;
         repeat (4) @(posedge clk);
         rst = 1'b0;
+        repeat (20) @(posedge clk);
+
+        // 给 CPU 发一个 'K'，它收到后会回显 "got K"。
+        // 早发也没关系：valid 是粘住的，CPU 什么时候读都行。
+        send_byte(8'h4B);
 
         for (n = 0; n < NBYTES; n++) begin
             @(negedge uart_tx);                  // 起始位开始

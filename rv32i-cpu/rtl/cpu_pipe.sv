@@ -34,7 +34,9 @@ module cpu_pipe #(
     output logic [31:0] dbg_x1,
     output logic [31:0] dbg_xor_all,
     // UART 发送：向 MMIO 地址 0x3000 写入一个字节，就从这里串行发出
-    output logic        uart_tx
+    output logic        uart_tx,
+    // UART 接收：串行输入（接 USB-TTL 的 TXD）
+    input  logic        uart_rx
 );
 
     // -- IF 段 ----------------------------------------------
@@ -92,13 +94,26 @@ module cpu_pipe #(
     logic [31:0] store_data;           // 按访存大小对齐后的写数据
 
     // -- MMIO（内存映射外设）---------------------------------
-    // 地址 0x3000：写 = UART 发送一个字节；读 = {31'b0, busy}
-    // dmem 只覆盖 0x1000~0x1FFF，所以 0x3xxx 这一页不会和真实内存冲突。
+    // 地址分配（0x8000 页；IMEM 占 0x0000~0x1FFF，DMEM 占 0x4000~0x7FFF）：
+    //   0x8000  写 = UART 发一个字节；读 = {31'b0, busy}
+    //   0x8004  读 = {31'b0, rx_valid}      有没有新数据
+    //   0x8008  读 = {24'b0, rx_data}       取走数据，同时清掉 valid
+    //   0x800C  读 = 上电以来的时钟周期数    （基准测试用来计时）
     logic [31:0] mem_rdata_final;      // MMIO 覆盖之后真正送进 MEM/WB 的读数据
-    logic        is_mmio_uart;         // 地址落在 UART 那一页
+    logic        is_mmio_uart;         // 地址落在外设那一页
+    logic        is_rx_status;         // 0x4004
+    logic        is_rx_data;           // 0x4008
+    logic        is_cycle_cnt;         // 0x400C
     logic        uart_we;              // 单拍的发送触发
     logic [7:0]  uart_data;            // 要发的字节
     logic        uart_busy;            // 1 = 上一帧还没发完
+
+    logic [31:0] cycle_cnt;            // 周期计数器，每拍 +1
+
+    logic        rx_pulse;             // uart_rx 收完一帧的单拍脉冲
+    logic [7:0]  rx_byte;              // uart_rx 交付的字节
+    logic        rx_valid;             // 粘住"有新数据"，读 0x4008 时清掉
+    logic [7:0]  rx_data;              // 最近收到的字节
 
     // -- mem_wb 的输出（给 WB 用）---------------------------
     logic [31:0] mem_wb_alu_result, mem_wb_mem_rdata, mem_wb_pc4;
@@ -301,27 +316,53 @@ module cpu_pipe #(
     //    （imm_gen 已经做过符号扩展，bit0 也补成了 0）
     assign branch_target = id_ex_pc + id_ex_imm;
 
+    // 分支条件用**专用比较器**算，不从 ALU 的 alu_result 取。
+    //
+    // 为什么：ALU 里有乘法器（M 扩展）。若 branch_taken 依赖 alu_result，
+    // 综合器无法排除"这条分支指令可能走乘法"，乘法器就会被算进
+    // mem_wb → 转发 → ALU → branch_taken → next_pc → PC 这条关键路径，
+    // 实测 WNS 从 +4.28ns 掉到 -0.77ns，50MHz 直接不满足。
+    //
+    // 代价是多一个 32 位比较器（约 100 LUT），换来乘法器与 PC 更新彻底解耦。
+    // 这也是常见做法：分支判断本来只需要"相等/大小"，不需要完整 ALU。
+    logic br_eq;       // a == b
+    logic br_ltu;      // a <  b（无符号）
+    logic br_lts;      // a <  b（有符号）
+
+    assign br_eq  = (ex_rs1 == ex_rs2);
+    assign br_ltu = (ex_rs1 < ex_rs2);
+    assign br_lts = ($signed(ex_rs1) < $signed(ex_rs2));
+
     always_comb begin
         case (id_ex_funct3)
-            3'b000:  branch_taken = id_ex_branch &  zero;          // beq
-            3'b001:  branch_taken = id_ex_branch & ~zero;          // bne
-            3'b100:  branch_taken = id_ex_branch &  alu_result[0]; // blt
-            3'b101:  branch_taken = id_ex_branch & ~alu_result[0]; // bge
-            3'b110:  branch_taken = id_ex_branch &  alu_result[0]; // bltu
-            3'b111:  branch_taken = id_ex_branch & ~alu_result[0]; // bgeu
+            3'b000:  branch_taken = id_ex_branch &  br_eq;    // beq
+            3'b001:  branch_taken = id_ex_branch & ~br_eq;    // bne
+            3'b100:  branch_taken = id_ex_branch &  br_lts;   // blt
+            3'b101:  branch_taken = id_ex_branch & ~br_lts;   // bge
+            3'b110:  branch_taken = id_ex_branch &  br_ltu;   // bltu
+            3'b111:  branch_taken = id_ex_branch & ~br_ltu;   // bgeu
 
             default: branch_taken = 1'b0;
         endcase
     end
 
     // 8) 跳转（JAL / JALR）
-    //    两者的目标都由 ALU 算出，区别只在 A 口接什么：
-    //      JAL ：A = pc,  B = imm -> pc + imm
-    //      JALR：A = rs1, B = imm -> rs1 + imm
-    //    所以这里直接取 ALU 结果即可。
-    //    bit0 清零：RISC-V 规定 JALR 的目标必须 2 字节对齐，
-    //    指令本身是 4 字节对齐的，所以实际效果就是丢掉最低位。
-    assign jump_target = {alu_result[31:1], 1'b0};
+    //    目标地址单独用加法器算，**不再从 ALU 取**：
+    //      JAL ：pc + imm   —— 和 branch_target 是同一个表达式，直接复用
+    //      JALR：rs1 + imm  —— 这里补一个专用加法器
+    //
+    //    为什么要拆出来：
+    //      ALU 里有乘法器（M 扩展）。如果跳转目标取自 alu_result，
+    //      综合器无法证明"跳转不会走乘法"，就会把乘法器算进 PC 关键路径，
+    //      实测 WNS 从 +4.28ns 掉到 -0.77ns，50MHz 不满足。
+    //      拆开之后乘法器与 PC 更新完全无关。
+    //
+    //    bit0 清零：RISC-V 规定 JALR 目标的 bit0 必须为 0。
+    logic [31:0] jalr_target;
+    assign jalr_target = (ex_rs1 + id_ex_imm) & ~32'd1;
+
+    // alu_a_src=01 表示 A 口吃 PC（即 JAL）；否则是 JALR，基址为 rs1
+    assign jump_target = (id_ex_alu_a_src == 2'b01) ? branch_target : jalr_target;
 
     // 最终改道目标：一条指令不可能既是分支又是跳转，二选一
     assign redirect_target = id_ex_jump ? jump_target : branch_target;
@@ -388,12 +429,22 @@ module cpu_pipe #(
     end
 
     // ---- MMIO 地址译码 ----
-    // 只看高 20 位，所以 0x3000 和 0x3004 都算 UART 这一页。
-    assign is_mmio_uart = (ex_mem_alu_result[31:12] == 20'h0_0003);
+    // 只看高 20 位判断是不是外设页；页内再用 addr[11:2] 分寄存器。
+    assign is_mmio_uart = (ex_mem_alu_result[31:12] == 20'h0_0008);
+    assign is_rx_status = is_mmio_uart && (ex_mem_alu_result[11:2] == 10'd1);  // 0x8004
+    assign is_rx_data   = is_mmio_uart && (ex_mem_alu_result[11:2] == 10'd2);  // 0x8008
+    assign is_cycle_cnt = is_mmio_uart && (ex_mem_alu_result[11:2] == 10'd3);  // 0x800C
     assign uart_we      = ex_mem_mem_write & is_mmio_uart;
     assign uart_data    = ex_mem_rs2[7:0];
 
-    dmem dmem_i (
+    // 周期计数器：上电后每拍 +1。基准测试（Dhrystone/CoreMark）靠它算耗时。
+    // 32 位 @50MHz 约 86 秒回绕，够跑一次基准。
+    always_ff @(posedge clk) begin
+        if (rst) cycle_cnt <= 32'd0;
+        else     cycle_cnt <= cycle_cnt + 32'd1;
+    end
+
+    dmem #(.USE_FILE(USE_FILE)) dmem_i (
         .clk(clk),
         // 写 MMIO 时不能同时写内存：0x3000 的 addr[11:2] 恰好是 0，
         // 不挡住的话会把 dmem[0] 踩掉。
@@ -404,10 +455,16 @@ module cpu_pipe #(
         .rd_data(mem_rdata)
     );
 
-    // MMIO 读优先于 dmem：读 0x3000 得到 busy，供软件轮询"上一帧发完没有"
+    // MMIO 读优先于 dmem
     always_comb begin
-        if (is_mmio_uart && ex_mem_mem_read)
-            mem_rdata_final = {31'd0, uart_busy};
+        if (is_cycle_cnt && ex_mem_mem_read)
+            mem_rdata_final = cycle_cnt;                // 0x800C: 周期计数
+        else if (is_rx_status && ex_mem_mem_read)
+            mem_rdata_final = {31'd0, rx_valid};        // 0x8004: 有新数据吗
+        else if (is_rx_data && ex_mem_mem_read)
+            mem_rdata_final = {24'd0, rx_data};         // 0x8008: 取数据
+        else if (is_mmio_uart && ex_mem_mem_read)
+            mem_rdata_final = {31'd0, uart_busy};       // 0x8000: 发送忙
         else
             mem_rdata_final = mem_rdata;
     end
@@ -432,6 +489,33 @@ module cpu_pipe #(
         .tx   (uart_tx),
         .busy (uart_busy)
     );
+
+    // UART 接收端：异步输入 + 五点多数表决（见 uart_rx.sv 头注释）
+    uart_rx #(
+        .CLK_FREQ (UART_CLK_FREQ),
+        .BAUD_RATE(UART_BAUD_RATE)
+    ) uart_rx_i (
+        .clk  (clk),
+        .rst  (rst),
+        .rx   (uart_rx),
+        .data (rx_byte),
+        .valid(rx_pulse),
+        .busy ()
+    );
+
+    // 收完一帧就置 valid（粘住，直到软件读走）；
+    // 读 0x3008 的同时清掉，相当于"取走数据"。
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            rx_valid <= 1'b0;
+            rx_data  <= 8'd0;
+        end else if (rx_pulse) begin
+            rx_data  <= rx_byte;
+            rx_valid <= 1'b1;
+        end else if (is_rx_data && ex_mem_mem_read) begin
+            rx_valid <= 1'b0;
+        end
+    end
 
     // MEM/WB 寄存器：只带 rd、两个候选写回值和 2 个控制信号
     mem_wb mem_wb_i (

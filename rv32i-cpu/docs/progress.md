@@ -382,3 +382,94 @@
 - 重新上板验证：COM7 收到 `SUM=55`
 - **遗留**：移位只有 ALU 单元测试，没有"整条 CPU 跑移位指令"的端到端测试
   （往 57 条程序里加会牵动 PROG_WORDS/PROG_RETIRED 和三个 testbench）
+
+## [039] M 扩展：硬件乘法 + 软件除法
+- **先做测量再动手**（两个独立小实验，Vivado 综合一个模块）：
+  | 运算 | 最长路径 | 等效 Fmax | 结论 |
+  | --- | --- | --- | --- |
+  | 乘法 `a*b` | 5.8 ns | ~171 MHz | 可以做 |
+  | 除法 `a/b` | **82.6 ns** | **~12 MHz** | 50MHz 差 4 倍，做不了 |
+- **方案**：`-march=rv32im -mno-div`
+  - 乘法用硬件（`alu.sv` 加 `ALU_MUL/MULH/MULHSU/MULHU`，序号 10~13）
+  - 除法用软件（`sw/div.c` 实现 `__divsi3/__udivsi3/__modsi3/__umodsi3`）
+  - `gcc --target-help` 确认有 `-mdiv` 选项，说明这套组合可行
+- **踩坑 1**：除数写成常量时 gcc 用"魔数乘法"（`mulhu`）而不是调库，
+  测不到 `div.c`。改成 `volatile int d` 才真正走软件除法。
+- **踩坑 2（大坑）**：加完乘法器 **WNS 从 +4.284 掉到 −0.767**，50MHz 不满足。
+  根因是 `branch_taken` 和 `jump_target` 都取自 `alu_result`，
+  乘法器被卷进 PC 关键路径。第一次只拆了 `jump_target`，没用。
+  最终给分支判断加**专用比较器**，`jump_target` 用独立加法器。
+  → WNS 回到 **+4.215ns**，LUT 只多 14 个
+- 结果：**17 个 tb 全绿 / 2710 LUT（5.09%）/ 12 DSP48 / Fmax ≈ 63.4MHz**
+- 上板验证：串口输出 `A=42`（硬件乘法）、`B=8`（软件除法）、`C=2`（软件取模）
+- 档案：`cases/case-26-multiplier-timing-critical-path.md`；`09-pitfalls.md` 第 26 条
+
+## [040] 字符串能读 + 自制 printf
+- **字符串能读**（补 case-23 那个坑）：
+  - `link.ld`：`.rodata` 从 IMEM 挪到 **DMEM**，并排在数据段最前
+  - `build.sh`：用 `objcopy -j .text` 单独抽指令段（否则会把 0x0000~0x1000 的
+    4KB 空隙一起带上），再用 `objcopy -j .rodata -j .data` 抽数据段
+  - 新增 `prog_data.hex`（数据段初值），`dmem` 加 `USE_FILE` 参数用 `$readmemh` 预载
+  - `bin2hex.py` 支持指定字数和填充值（指令补 NOP、数据补 0）
+- **自制 printf**：`sw/printf.c`，支持 `%d %u %x %c %s %%`
+  - `va_list` 来自 gcc 自带的 `stdarg.h`（编译器头，不是 libc）
+  - 名字用 `printf_` 不用 `printf`：避免 gcc 对内建函数做签名检查
+- **意外验证**：`printf_` 的 switch 被编译成**跳转表**（`lw` 从 0x1048 读目标地址再 `jr`）。
+  跳转表在 `.rodata`，如果还在 IMEM 就会跳飞 —— 正好证明任务 #2 是必需的
+- 上板前的仿真结果：串口输出 `Hello!` / `A=42` / `B=8` / `C=2` / `beef ok!`
+- `cpu_uart_tb` 扩到 34 个字节断言，全套 17 个 tb 全绿
+
+## [041] UART 接收 + getchar
+- 新增 `rtl/uart_rx.sv`，参考官方例程 ch06/ch09 的三个关键手法：
+  - **两级同步器**：rx 是异步输入，直接用会亚稳态
+  - **位中间五点采样 + 多数表决**：在 MID−2..MID+2 连采 5 拍，3 票算 1，等于数字滤波
+  - **假起始位退出**：采完起始位若多数是 1，说明是噪声，立刻回 IDLE
+- MMIO 扩展（都在 0x3000 页内）：
+  | 地址 | 写 | 读 |
+  | --- | --- | --- |
+  | 0x3000 | 发送字节 | busy |
+  | 0x3004 | — | `{31'b0, valid}` |
+  | 0x3008 | — | `{24'b0, data}`，**读后自动清 valid** |
+  - `rx_valid` 做成粘住的寄存器，软件什么时候读都行，不会漏字节
+- C 侧 `getchar_`（在 `printf.c` 里）：先读 0x3004 等 valid，再读 0x3008 取数
+- `fpga_top` 加 `uart_rx` 输入，引脚 **J19**，XDC 里加了 **PULLUP**（空闲必须为高）
+- **踩坑 1**：`iverilog` 不支持 task 端口声明成 `input string`，改成只传 `logic [7:0]`
+- **踩坑 2**：task 参数名不能叫 `expect` —— SystemVerilog 关键字，**case-07 原样复现**
+- **踩坑 3（重要）**：加完接收 WNS 从 +1.246 掉到 **+0.521**。
+  拆开看逻辑反而快了 0.585ns，是**布线慢了 1.365ns** ——
+  多 33 个 LUT 改变了布局，把乘法器路径挤差了。
+  换 `place ExtraTimingOpt` + `route AggressiveExplore` 后恢复到 **+1.252**
+  → 结论：**"新逻辑不在关键路径上"不等于"不影响时序"**，布局会变
+- 验证：`uart_rx_tb` 独立测 5 个字节 + 假起始位 + 噪声后恢复；
+  `cpu_uart_tb` 端到端给 CPU 发 'K'，收到回显 `got K`
+- 全套 **18 个 testbench 全绿**；WNS +1.252ns（Fmax 53.4MHz）
+
+## [042] ★ 内存扩展 + Dhrystone 基准测试
+- **内存扩到 IMEM 8KB + DMEM 16KB**，地址重新划分：
+  | 范围 | 用途 | 索引 |
+  | --- | --- | --- |
+  | 0x0000 ~ 0x1FFF | IMEM 8KB | `addr[12:2]` |
+  | 0x4000 ~ 0x7FFF | DMEM 16KB | `addr[13:2]` |
+  | 0x8000 ~ | MMIO | — |
+  - 基址必须让 `addr[高位:2]` 落在数组范围内，否则会回绕。8KB 基址低 13 位为 0，
+    16KB 基址低 14 位为 0 —— 所以 DMEM 放 0x4000，不能紧接 IMEM
+- **周期计数器 MMIO `0x800C`**：上电起每拍 +1，基准测试用它计时
+- **Dhrystone 2.2 移植**（`sw/bench/`）：
+  - 源码来自 riscv-tests，K&R 风格老代码 → 用 `-std=gnu89` 编译
+  - 自己补了 `stdio.h` / `string.h` / `alloca.h` / `util.h` 四个最小头
+  - `support.c` 提供 `strcpy/strcmp/memcpy/malloc/setStats`
+  - `-Dprintf=printf_` 把 Dhrystone 的 printf 指到我们的实现
+  - `build_bench.sh` 单独构建，产物覆盖 `prog.hex`（跑完用 `build.sh` 恢复演示程序）
+- **踩坑 1**：8KB DMEM 装不下 —— Dhrystone 的 `Arr_2_Glob[50][50]`（int）一个就 10KB
+- **踩坑 2**：Dhrystone 公式在 32 位下溢出
+  `Microseconds = ((User_Time / N) * 1000000) / HZ`，HZ 设成 5000 万时乘 1e6 直接溢出，
+  算出 23 这种假数。改成"计时器直接返回微秒 + HZ=1000000"后自洽
+- **实测结果（板上，50MHz）**：
+  ```
+  Microseconds for one run through Dhrystone: 23
+  Dhrystones per Second:                      43029
+  ```
+  → **24.5 DMIPS = 0.49 DMIPS/MHz**
+  （仿真与板上完全一致，因为计时器数的是周期数，÷50 得微秒，与仿真时钟快慢无关）
+- 资源：**4878 LUT（9.17%）/ 12 DSP48 / 0 BRAM**；WNS **+1.170ns → Fmax 53.1MHz**
+- 结论：0.49 DMIPS/MHz 对"无分支预测、分支罚 2 拍、除法走软件"的简单五级流水线是合理值

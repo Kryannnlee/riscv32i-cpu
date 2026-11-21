@@ -4,7 +4,7 @@ module cpu_pipe_tb;
     logic clk = 0;
     logic rst = 1;
 
-    cpu_pipe dut (.clk(clk), .rst(rst));
+    cpu_pipe dut (.clk(clk), .rst(rst), .uart_rx(1'b1));   // rx 空闲为高
 
     always #5 clk = ~clk;          // 周期 10ns
 
