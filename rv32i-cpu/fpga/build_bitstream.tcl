@@ -47,5 +47,20 @@ open_run impl_1
 report_utilization    -file $root/fpga/util_impl.rpt
 report_timing_summary -file $root/fpga/timing_impl.rpt -max_paths 5
 
+# ---- 按版本归档报告 ----
+# 上面两个固定名的文件每次构建都被覆盖，论文里没法引用"跑 Dhrystone 那次"的数据。
+# 这里再存一份到 fpga/reports/<tag>/，tag 由环境变量 BUILD_TAG 指定。
+#   PowerShell: $env:BUILD_TAG="dhrystone"; vivado -mode batch -source fpga/build_bitstream.tcl
+if {[info exists ::env(BUILD_TAG)]} {
+    set tag $::env(BUILD_TAG)
+} else {
+    set tag "unlabeled"
+}
+set repdir "$root/fpga/reports/$tag"
+file mkdir $repdir
+file copy -force $root/fpga/util_impl.rpt    $repdir/util.rpt
+file copy -force $root/fpga/timing_impl.rpt  $repdir/timing.rpt
+puts "=== REPORTS ARCHIVED: $repdir ==="
+
 puts "=== BITSTREAM: $proj/rv32i.runs/impl_1/fpga_top.bit ==="
 exit
