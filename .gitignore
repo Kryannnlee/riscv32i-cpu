@@ -32,3 +32,8 @@ rv32i-cpu/sw/prog.dis
 rv32i-cpu/sw/prog.data
 rv32i-cpu/sw/bench.elf
 rv32i-cpu/sw/bench.dis
+
+# IDE
+.idea/
+*.iml
+.vscode/
