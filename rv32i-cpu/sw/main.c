@@ -20,7 +20,6 @@ int main(void)
     int p = a * b;           /* 42  硬件 mul */
     int q = p / d;           /* 8   软件 __divsi3 */
     int r = p % d;           /* 2   软件 __modsi3 */
-    int c;
 
     printf_("Hello!\r\n");   /* 字符串字面量 */
     printf_("A=%d\r\n", p);  /* %d */
@@ -28,9 +27,10 @@ int main(void)
     printf_("C=%d\r\n", r);
     printf_("%x %s%c\r\n", 0xbeef, "ok", '!');   /* %x %s %c */
 
-    /* 等串口发来一个字节，收到后回显 —— 验证 UART 接收通路 */
-    c = getchar_();
-    printf_("got %c\r\n", c);
-
-    for (;;) { }
+    /* 循环回显：从串口收到什么字符就发回什么。
+     * 一直循环，方便答辩时随便敲键盘看反应。 */
+    for (;;) {
+        int c = getchar_();
+        printf_("got %c\r\n", c);
+    }
 }
