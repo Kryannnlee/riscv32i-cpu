@@ -153,6 +153,14 @@ module cpu_uart_tb;
             end
         end
 
+        // 顺带验证：整个 C 程序跑下来，不该出现任何未对齐访存
+        if (dut.dbg_misalign !== 1'b0) begin
+            $display("  FAIL 程序运行期间出现过未对齐的 load/store");
+            errors++;
+        end else begin
+            $display("  PASS 全程没有未对齐访存");
+        end
+
         finished = 1;
         if (errors == 0)
             $display("==== UART PROGRAM PASS ====");

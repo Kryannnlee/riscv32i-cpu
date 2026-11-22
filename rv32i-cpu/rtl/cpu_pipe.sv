@@ -33,6 +33,9 @@ module cpu_pipe #(
     output logic [31:0] dbg_pc,
     output logic [31:0] dbg_x1,
     output logic [31:0] dbg_xor_all,
+    // 1 = 曾经发生过未对齐的 load/store（粘住不消失）
+    // 我们没有异常机制，只能把这件事暴露出来，不能 trap
+    output logic        dbg_misalign,
     // UART 发送：向 MMIO 地址 0x3000 写入一个字节，就从这里串行发出
     output logic        uart_tx,
     // UART 接收：串行输入（接 USB-TTL 的 TXD）
@@ -443,6 +446,26 @@ module cpu_pipe #(
         if (rst) cycle_cnt <= 32'd0;
         else     cycle_cnt <= cycle_cnt + 32'd1;
     end
+
+    // ---- 未对齐访存检查 ----
+    // 本设计没有异常机制，无法 trap，只能"检测 + 锁存 + 引到 LED"，
+    // 至少不会让非对齐的 lw/sw 静默读写错字。
+    logic mem_misaligned;
+    logic misalign_seen;
+
+    align_check align_check_i (
+        .funct3    (ex_mem_funct3),
+        .addr_lo   (ex_mem_alu_result[1:0]),
+        .is_mem    (ex_mem_mem_read | ex_mem_mem_write),
+        .misaligned(mem_misaligned)
+    );
+
+    always_ff @(posedge clk) begin
+        if (rst)                 misalign_seen <= 1'b0;
+        else if (mem_misaligned) misalign_seen <= 1'b1;   // 粘住，方便事后发现
+    end
+
+    assign dbg_misalign = misalign_seen;
 
     dmem #(.USE_FILE(USE_FILE)) dmem_i (
         .clk(clk),

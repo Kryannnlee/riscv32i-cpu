@@ -40,6 +40,7 @@ module fpga_top (
 
     // -- CPU --
     logic [31:0] dbg_pc, dbg_x1, dbg_xor_all;
+    logic        dbg_misalign;
 
     cpu_pipe #(
         .USE_FILE      (1),               // 从 sw/prog.hex 加载 C 程序
@@ -51,6 +52,7 @@ module fpga_top (
         .dbg_pc      (dbg_pc),
         .dbg_x1      (dbg_x1),
         .dbg_xor_all (dbg_xor_all),
+        .dbg_misalign(dbg_misalign),
         .uart_tx     (uart_tx),
         .uart_rx     (uart_rx)
     );
@@ -68,7 +70,11 @@ module fpga_top (
     // led[0]：心跳。只要时钟在跑就闪，证明设计活着。
     // C 程序的运行结果从 UART 输出，不再用 LED 编码。
     assign led[0]   = blink_cnt[24];
-    assign led[3:1] = dbg_x1[2:0];
+    // led[1]：未对齐访存报警。一旦发生过就常亮，需要重新配置才灭。
+    // 没有异常机制，这是让"非对齐 lw/sw 静默算错"变得可见的唯一办法。
+    // 注意：它在 GPIO0 排针上（L15），不接线看不到。
+    assign led[1]   = dbg_misalign;
+    assign led[3:2] = dbg_x1[1:0];
 
     // 把所有寄存器异或成一比特。纯粹为了"保住"整个数据通路不被优化
     assign dbg_alive = ^dbg_xor_all;

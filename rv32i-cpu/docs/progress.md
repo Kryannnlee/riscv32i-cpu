@@ -488,3 +488,20 @@
   → 再次印证"小改动打乱布局，结果可好可坏，必须每次实测"
 - 新增 `alu_ctrl_tb` 1 条、`decoder_tb` 2 条断言，19 个 tb 全绿
 - 档案：`cases/case-27-missing-sltiu.md`；`09-pitfalls.md` 第 27 条
+
+## [044] 未对齐访存检查
+- **问题**：`dmem` 只用 `addr[13:2]` 做字下标，`addr[1:0]` 只用来选字节/半字。
+  所以非对齐的 `lw`/`sw` 会**读写到错误的字，而且不报任何错**
+- **能做什么**：本设计没有异常机制（无 mtvec/mepc/mcause），**没法 trap**。
+  只能"检测 + 锁存 + 引出来"，让错误可见
+- 新增 `rtl/align_check.sv`：
+  - `lw`/`sw`（funct3=010）要求 `addr[1:0]==00`
+  - `lh`/`lhu`/`sh`（funct3=001/101）要求 `addr[0]==0`
+  - `lb`/`lbu`/`sb` 无对齐要求
+  - 只在 `is_mem` 有效时才报警（非访存指令的 funct3 不算）
+- `align_check_tb`：穷举 5 种 funct3 × 4 种地址低位 × 访存/非访存 = **40 组**
+- `cpu_pipe` 里检测结果**锁存**（粘住不消失），引出 `dbg_misalign`，
+  `fpga_top` 接到 `led[1]`（GPIO0 的 L15，不接线看不到）
+- `cpu_uart_tb` 加断言：**整个 C 程序跑下来 `dbg_misalign` 必须为 0** → 通过
+- 结果：**WNS +2.350 → +2.445ns**，LUT 4415 → 4438（+23）
+- 比特流备份：`fpga/bitstreams/demo-align.bit`
