@@ -1,0 +1,36 @@
+Dhrystone 板上实测输出（硬件除法版）
+=====================================
+
+采集时间：2026-11-22
+硬件    ：BX71 核心板（XC7Z020CLG400），50MHz
+串口    ：CP2102 / COM7 / 115200 8N1
+程序    ：sw/bench/ 编译产物（Dhrystone 2.2，Number_Of_Runs = 500）
+          -march=rv32im（乘法、除法都是硬件指令）
+比特流  ：fpga/bitstreams/dhrystone-hwdiv.bit
+          → 报告见 fpga/reports/dhrystone-hwdiv/
+
+【原始字节】串口助手的十六进制视图
+4D 69 63 72 6F 73 65 63 6F 6E 64 73 20 66 6F 72 20 6F 6E 65 20 72 75 6E
+20 74 68 72 6F 75 67 68 20 44 68 72 79 73 74 6F 6E 65 3A 20 31 31 0A
+44 68 72 79 73 74 6F 6E 65 73 20 70 65 72 20 53 65 63 6F 6E 64 3A 20
+20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 38
+39 32 36 39 0A
+
+【解码后的文本】
+Microseconds for one run through Dhrystone: 11
+Dhrystones per Second:                      89269
+
+【换算】
+DMIPS      = 89269 / 1757 = 50.8
+DMIPS/MHz  = 50.8 / 50     = 1.02
+
+【与软件除法版对比】同一份 RTL，只把除法从软件库换成硬件指令：
+
+  软件除法 (-mno-div + sw/div.c)   23 µs/run   43,029 Dhrystones/s   0.49 DMIPS/MHz
+  硬件除法 (rv32im + rtl/div_unit) 11 µs/run   89,269 Dhrystones/s   1.02 DMIPS/MHz
+                                    ^^^^^^^^^^  2.07 倍
+
+说明：
+- 硬件除法器是 32 拍多周期的（restoring 算法），每拍只做一次"33 位比较+减法"。
+  组合实现实测最长路径 82.6ns，50MHz 差 4 倍，所以必须拆拍。
+- 仿真与板上结果完全一致（计时器数周期数，÷50 得微秒，与仿真时钟快慢无关）。

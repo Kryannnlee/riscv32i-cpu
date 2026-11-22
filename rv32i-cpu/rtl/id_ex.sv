@@ -39,6 +39,9 @@ module id_ex (
     // 1 = 灌一个"气泡"进去：控制信号全清 0，等于插入一条 NOP。
     // load-use 冒险时用它，让 EX 这一拍什么都不做。
     input  logic        flush,
+    // hold：1 = 保持当前值不动（多周期除法器在 EX 里运行时要冻结这一级）
+    //       优先级低于 flush：flush 仍然会清空
+    input  logic        hold,
 
     // -- 数据（ID 产出）--
     input  logic [31:0] rs1_data_in,
@@ -109,7 +112,8 @@ module id_ex (
             jump_out      <= 1'b0;
             result_src_out<= 2'b0;
             alu_a_src_out <= 2'b0;
-        end else begin
+        end else if (!hold) begin
+            // 正常推进。hold=1 时整个 else 分支都不执行，所有输出保持原值。
             rs1_data_out  <= rs1_data_in;
             rs2_data_out  <= rs2_data_in;
             rs1_out       <= rs1_in;

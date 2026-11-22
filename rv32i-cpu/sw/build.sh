@@ -8,13 +8,12 @@ CC=${CC:-riscv64-unknown-elf-gcc}
 OBJCOPY=${OBJCOPY:-riscv64-unknown-elf-objcopy}
 OBJDUMP=${OBJDUMP:-riscv64-unknown-elf-objdump}
 
-# -march=rv32im  开硬件乘法（ALU 里已实现 mul/mulh/mulhu/mulhsu）
-# -mno-div       关硬件除法，让 gcc 调用 div.c 里的 __divsi3 等
-#                 （组合除法器实测 82.6ns 一条，50MHz 跑不动）
-CFLAGS="-march=rv32im -mno-div -mabi=ilp32 -O2 -nostdlib -nostartfiles -T link.ld"
+# 完整 M 扩展：乘法（组合，DSP48）和除法（32 拍多周期，rtl/div_unit.sv）都是硬件指令
+# 不再需要 -mno-div，也不再链接 sw/div.c 里的软件除法库
+CFLAGS="-march=rv32im -mabi=ilp32 -O2 -nostdlib -nostartfiles -T link.ld"
 
 echo "==> 编译"
-$CC $CFLAGS start.S main.c div.c printf.c -o prog.elf
+$CC $CFLAGS start.S main.c printf.c -o prog.elf
 
 echo "==> 转指令段（只取 .text，不然会把中间 4KB 空隙也带上）"
 $OBJCOPY -O binary -j .text prog.elf prog.bin

@@ -53,7 +53,9 @@ module cpu_bench_tb;
                 b[k] = uart_tx;
                 repeat (CPB) @(posedge clk);
             end
-            repeat (CPB/2) @(posedge clk);           // 越过停止位
+            // 等停止位（线路变高）再找下一帧的下降沿。
+            // 固定 repeat(CPB/2) 在背靠背发送时会正好踩在下一帧起始沿上，漏字节。
+            while (!uart_tx) @(posedge clk);
             nbytes++;
             // 可打印字符直接输出，回车换行也照做
             if (b == 8'h0A) $write("\n");

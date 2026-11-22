@@ -79,6 +79,13 @@ module cpu_pipe #(
     logic [31:0] alu_a, alu_b, alu_result;
     logic        zero;
 
+    // -- 多周期除法（声明要放在使用之前）--------------------
+    logic        is_div_ex;          // EX 里这条是 div/divu/rem/remu
+    logic        div_start;          // 启动脉冲
+    logic        div_busy, div_done, div_stall;
+    logic [31:0] div_result;
+    logic [31:0] ex_result;          // EX 最终产出（除法完成时替换 alu_result）
+
     // -- 转发 -----------------------------------------------
     logic [1:0]  forward_a, forward_b;      // 来自 forward_unit 的选择信号
     logic [31:0] ex_rs1, ex_rs2;            // 转发 MUX 之后、真正送进 ALU 的操作数
@@ -129,7 +136,7 @@ module cpu_pipe #(
 
     // ======================== IF 段 =========================
     // 涉及模块：pc、imem、加法器（算 PC+4）
-    program_counter pc_reg (.clk(clk), .rst(rst), .stall(stall), .pc_next(next_pc), .pc(pc));
+    program_counter pc_reg (.clk(clk), .rst(rst), .stall(stall | div_stall), .pc_next(next_pc), .pc(pc));
 
     assign pc_plus4 = pc + 32'd4;
 
@@ -144,7 +151,7 @@ module cpu_pipe #(
 
     // IF/ID 寄存器：把这一拍取到的指令交给下一拍的 ID 级
     if_id if_id_i (
-        .clk(clk), .rst(rst), .stall(stall), .flush(pc_redirect),
+        .clk(clk), .rst(rst), .stall(stall | div_stall), .flush(pc_redirect),
         .pc_in(pc), .instr_in(instr), .pc4_in(pc_plus4),
         .pc_out(if_id_pc), .instr_out(if_id_instr), .pc4_out(if_id_pc4)
     );
@@ -210,7 +217,7 @@ module cpu_pipe #(
     // 注意 rs1_in / rs2_in 传的是**寄存器编号**，不是数据--
     // 转发单元要靠它跟上游的 rd 比较。
     id_ex id_ex_i (
-        .clk(clk), .rst(rst), .flush(stall | pc_redirect),
+        .clk(clk), .rst(rst), .flush(stall | pc_redirect), .hold(div_stall),
         .rs1_data_in(rs1_data), .rs2_data_in(rs2_data), .imm_in(imm),
         .pc_in(if_id_pc), .pc4_in(if_id_pc4),
         .rs1_in(if_id_instr[19:15]), .rs2_in(if_id_instr[24:20]),
@@ -376,9 +383,44 @@ module cpu_pipe #(
     // EX/MEM 寄存器：存 EX 的产出
     // * rs2_data_in 接的是 ex_rs2（转发后的值），不是 id_ex_rs2_data。
     //   否则 sw 存进去的会是旧值--这是最容易漏的第三处转发入口。
+    // ============ 多周期除法（M 扩展的 div/divu/rem/remu）============
+    // 识别：R 型（alu_op=10）且 funct7=0000001 且 funct3[2]=1
+    //   funct3[1] = 1 -> 要余数（rem/remu），0 -> 要商（div/divu）
+    //   funct3[0] = 1 -> 无符号（divu/remu），0 -> 有符号（div/rem）
+    //
+    // 为什么必须多周期：组合除法器实测最长路径 82.6ns，50MHz 差 4 倍。
+    // 拆成 32 拍后每拍只做一次"比较-减"，路径很短。
+    //
+    // 流水线配合：
+    //   启动那一拍开始拉 div_stall，id_ex **保持**（不能冲刷，否则指令丢了），
+    //   ex_mem 灌气泡（防止半成品往下走）；
+    //   done 那拍 div_stall 撤掉，用 div_result 替换 alu_result 写进 ex_mem。
+    assign is_div_ex = (id_ex_alu_op == 2'b10) &&
+                       (id_ex_funct7 == 7'b0000001) &&
+                        id_ex_funct3[2];
+
+    assign div_start = is_div_ex & ~div_busy & ~div_done;
+    assign div_stall = is_div_ex & ~div_done;
+
+    assign ex_result = (is_div_ex & div_done) ? div_result : alu_result;
+
+    div_unit div_unit_i (
+        .clk      (clk),
+        .rst      (rst),
+        .start    (div_start),
+        .is_signed(~id_ex_funct3[0]),
+        .want_rem (id_ex_funct3[1]),
+        .dividend (ex_rs1),
+        .divisor  (ex_rs2),
+        .result   (div_result),
+        .busy     (div_busy),
+        .done     (div_done)
+    );
+
     ex_mem ex_mem_i (
         .clk(clk), .rst(rst),
-        .alu_result_in(alu_result), .rs2_data_in(ex_rs2), .pc4_in(id_ex_pc4),
+        .flush(div_stall),                 // 除法进行中往下游灌气泡
+        .alu_result_in(ex_result), .rs2_data_in(ex_rs2), .pc4_in(id_ex_pc4),
         .funct3_in(id_ex_funct3),
         .zero_in(zero), .rd_in(id_ex_rd),
         .reg_write_in(id_ex_reg_write), .mem_read_in(id_ex_mem_read),

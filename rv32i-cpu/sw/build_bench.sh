@@ -18,13 +18,13 @@ CC=${CC:-riscv64-unknown-elf-gcc}
 OBJCOPY=${OBJCOPY:-riscv64-unknown-elf-objcopy}
 OBJDUMP=${OBJDUMP:-riscv64-unknown-elf-objdump}
 
-CFLAGS="-march=rv32im -mno-div -mabi=ilp32 -O2 -nostdlib -nostartfiles -std=gnu89 \
+CFLAGS="-march=rv32im -mabi=ilp32 -O2 -nostdlib -nostartfiles -std=gnu89 \
         -T link.ld -Ibench -Dprintf=printf_"
 
 echo "==> 编译 Dhrystone"
 $CC $CFLAGS start.S \
     bench/dhrystone.c bench/dhrystone_main.c bench/support.c \
-    div.c printf.c -o bench.elf
+    printf.c -o bench.elf
 
 echo "==> 转指令段"
 $OBJCOPY -O binary -j .text bench.elf prog.bin

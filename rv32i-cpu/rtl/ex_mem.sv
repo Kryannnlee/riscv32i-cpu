@@ -26,6 +26,9 @@
 module ex_mem (
     input  logic        clk,
     input  logic        rst,
+    // flush：1 = 灌气泡。多周期除法器在 EX 里跑时下游不能拿到半成品，
+    //        否则会用垃圾值写寄存器/内存。
+    input  logic        flush,
 
     // -- EX 产出 --
     input  logic [31:0] alu_result_in,
@@ -60,7 +63,7 @@ module ex_mem (
 );
 
     always_ff @(posedge clk) begin
-        if (rst) begin
+        if (rst || flush) begin
             alu_result_out <= 32'b0;
             rs2_data_out   <= 32'b0;
             zero_out       <= 1'b0;

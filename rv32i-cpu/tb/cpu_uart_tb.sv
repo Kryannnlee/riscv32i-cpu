@@ -65,6 +65,15 @@ module cpu_uart_tb;
         end
     endtask
 
+    // 给 CPU 发一个 'K'，它收到后会回显 "got K"。
+    // 必须放独立 initial：send_byte 要占 10×8 拍，
+    // 如果串在接收循环前面，这期间 CPU 已经开始打印，开头的字节会被错过。
+    // （软件除法时代程序启动慢，没撞上；换成硬件除法后启动快了，才暴露。）
+    initial begin
+        repeat (24) @(posedge clk);
+        send_byte(8'h4B);
+    end
+
     // 超时看门狗：C 程序不发数据的话，接收循环会永远等下去
     initial begin
         #2_000_000;      // 软件除法是 32 次移位循环，比原来慢很多，余量给足
@@ -126,11 +135,6 @@ module cpu_uart_tb;
         rst = 1'b1;
         repeat (4) @(posedge clk);
         rst = 1'b0;
-        repeat (20) @(posedge clk);
-
-        // 给 CPU 发一个 'K'，它收到后会回显 "got K"。
-        // 早发也没关系：valid 是粘住的，CPU 什么时候读都行。
-        send_byte(8'h4B);
 
         for (n = 0; n < NBYTES; n++) begin
             @(negedge uart_tx);                  // 起始位开始
@@ -141,7 +145,11 @@ module cpu_uart_tb;
                 repeat (CPB) @(posedge clk);
             end
             got_bytes[n] = b;
-            repeat (CPB/2) @(posedge clk);       // 越过停止位
+
+            // 等停止位（线路回到高电平），再回到循环开头等下一帧的下降沿。
+            // 不能写固定的 repeat(CPB/2)：背靠背发送时那正好落在下一帧的
+            // 起始沿上，会漏掉一个字节（以前 CPU 慢、字符间有空隙才没暴露）。
+            while (!uart_tx) @(posedge clk);
 
             if (got_bytes[n] === expect_bytes[n])
                 $display("  PASS   第 %0d 字节 = 0x%02x ('%s')",
