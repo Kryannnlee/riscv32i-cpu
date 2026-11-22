@@ -42,6 +42,7 @@ initial begin
         // 立即数运算（通常 I 型的 funct7 大部分为 0，除了 SRAI 等）
         check(2'b11, 3'b000, 7'b0000000, 4'd0); // ADDI → ADD (0)
         check(2'b11, 3'b010, 7'b0000000, 4'd5); // SLTI → SLT (5)
+        check(2'b11, 3'b011, 7'b0000000, 4'd6); // SLTIU → SLTU (6)  ← 以前漏了这条
         check(2'b11, 3'b100, 7'b0000000, 4'd4); // XORI → XOR (4)
         check(2'b11, 3'b110, 7'b0000000, 4'd3); // ORI  → OR  (3)
         check(2'b11, 3'b111, 7'b0000000, 4'd2); // ANDI → AND (2)

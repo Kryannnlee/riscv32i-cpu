@@ -473,3 +473,18 @@
   （仿真与板上完全一致，因为计时器数的是周期数，÷50 得微秒，与仿真时钟快慢无关）
 - 资源：**4878 LUT（9.17%）/ 12 DSP48 / 0 BRAM**；WNS **+1.170ns → Fmax 53.1MHz**
 - 结论：0.49 DMIPS/MHz 对"无分支预测、分支罚 2 拍、除法走软件"的简单五级流水线是合理值
+
+## [043] 补齐 RV32I 缺的 4 条指令
+- **起因**：核对 ACT（riscv-arch-test）要求时逐条清点，发现 RV32I 40 条里只做了 36 条
+- **缺的是**：`sltiu`、`FENCE`、`ECALL`、`EBREAK`
+- **`sltiu` 是个静默 bug**：`alu_ctrl` 的 I 型没有 `funct3=011` 分支，
+  落到兜底 `4'd0` = ADD，被当 `addi` 执行。和 case-25（移位落 default）同一类
+- **修法**：
+  - `alu_ctrl` 加 `(funct3 == 3'b011) ? 4'd6`（复用现成的 `ALU_SLTU`）
+  - `decoder` 补 `0001111`(FENCE) 和 `1110011`(SYSTEM)，都输出默认值 = NOP
+- **已知局限**：ECALL/EBREAK 只当 NOP，**没有异常机制**（无 mtvec/mepc/mcause），
+  也没有 CSR 指令。论文里要如实写
+- **时序反而变好**：WNS **+0.771 → +2.350ns**，LUT 4417 → 4415
+  → 再次印证"小改动打乱布局，结果可好可坏，必须每次实测"
+- 新增 `alu_ctrl_tb` 1 条、`decoder_tb` 2 条断言，19 个 tb 全绿
+- 档案：`cases/case-27-missing-sltiu.md`；`09-pitfalls.md` 第 27 条

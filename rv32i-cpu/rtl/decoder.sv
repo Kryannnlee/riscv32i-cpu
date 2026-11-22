@@ -166,6 +166,22 @@ module decoder (
                 uses_rs1   = 1'b1;      // 要读 rs1 当基址
             end
 
+            // ---- FENCE / FENCE.I：无操作 ----
+            // 这是单核、没有 Cache、访存顺序确定的简单实现，
+            // 指令流本来就不会乱序，所以 FENCE 什么都不用做。
+            // 显式列出来是为了说明"我们认识这条指令"，而不是漏掉落到 default。
+            7'b0001111: begin
+                // 保持全部默认值 = NOP
+            end
+
+            // ---- SYSTEM：ECALL / EBREAK ----
+            // 严格说这两条应该触发异常（进入 trap 处理程序）。
+            // 本设计**没有异常机制**（无 mtvec/mepc/mcause），只能当 NOP 处理。
+            // 这是已知局限，写进论文。见 docs/09-pitfalls.md 第 27 条。
+            7'b1110011: begin
+                // 保持全部默认值 = NOP
+            end
+
             // 其余 opcode 保持默认值 = NOP
         endcase
     end

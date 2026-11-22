@@ -69,6 +69,9 @@ module alu_ctrl (
                             (funct3 == 3'b101 && funct7 == 7'b0000000) ? 4'd8 : // srli
                             (funct3 == 3'b101 && funct7 == 7'b0100000) ? 4'd9 : // srai
                               (funct3 == 3'b010) ? 4'd5 : // slti
+                              // sltiu：立即数符号扩展后**按无符号**比较，
+                              // 正好就是 ALU_SLTU 的语义（a < b 无符号，b 是扩好的 imm）
+                              (funct3 == 3'b011) ? 4'd6 : // sltiu
                               (funct3 == 3'b100) ? 4'd4 : // xori
                               (funct3 == 3'b110) ? 4'd3 : // ori
                               (funct3 == 3'b111) ? 4'd2 : // andi
